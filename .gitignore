@@ -214,3 +214,24 @@ data/
 __pycache__/
 .ipynb_checkpoints/
 
+# Data exports (NDJSON / TSV)
+*.jsonl
+*.tsv
+
+# Local databases & dump artifacts
+*.sqlite
+*.dump
+*.bak
+
+# Log files
+*.log
+
+# Docker/Compose env files
+docker/.env
+
+# DB backups & local PG volume (if you bind-mount)
+backups/
+pgdata/
+
+# macOS
+**/.DS_Store
