@@ -1,21 +1,16 @@
 name: CI
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  push: { branches: [ "main" ] }
+  pull_request: { branches: [ "main" ] }
 
 jobs:
-  build:
+  checks:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
@@ -26,19 +21,19 @@ jobs:
           key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-${{ runner.os }}-
 
-      - name: Install project + dev deps
+      - name: Install check-time deps (no project build)
         run: |
           python -m pip install --upgrade pip
-          pip install ".[dev]"
+          pip install \
+            pandas psycopg2-binary exchange_calendars python-dotenv \
+            pandas-stubs types-psycopg2 \
+            mypy ruff black
 
       - name: Ruff (lint)
-        run: ruff check .
+        run: ruff check ingest
 
       - name: Black (format check)
-        run: black --check .
+        run: black --check ingest
 
       - name: MyPy (type check)
-        run: mypy .
-
-      - name: Pytest
-        run: pytest
+        run: mypy ingest

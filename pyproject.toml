@@ -1,40 +1,19 @@
-[project]
-name = "over-intra-news"
-version = "0.0.0"
-requires-python = ">=3.13"
-dependencies = [
-  "exchange_calendars",
-  "pandas",
-  "psycopg2-binary",
-  "python-dotenv",
-]
-
-[project.optional-dependencies]
-dev = [
-  "pytest",
-  "mypy",
-  "ruff",
-  "black",
-  "pandas-stubs",
-  "types-psycopg2",
-]
-
-[build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Not a distributable package — just central config for tools used in CI
+# ─────────────────────────────────────────────────────────────────────────────
 [tool.mypy]
 python_version = "3.13"
 warn_unused_ignores = true
 disallow_untyped_defs = true
 pretty = true
+# Limit mypy to actual Python code so it doesn't roam:
+files = ["ingest"]
 
 [[tool.mypy.overrides]]
 module = ["exchange_calendars.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
-# Match Black’s defaults
 line-length = 88
 target-version = "py313"
 
@@ -49,6 +28,11 @@ target-version = ["py313"]
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-q"
-testpaths = [
-  "tests",
-]
+testpaths = ["tests"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional safety guard: prevent setuptools from accidentally discovering pkgs
+# If someone runs `pip install .` by mistake, this stops package discovery.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.setuptools]
+packages = []
