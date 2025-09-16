@@ -15,15 +15,15 @@ ignore_missing_imports = true
 [tool.ruff]
 # Match Black’s defaults
 line-length = 88
-target-version = "py311"
+target-version = "py313"
 
-# Enable some common rules (ruff has lots of linter codes)
+[tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = []
 
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+target-version = ["py313"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
