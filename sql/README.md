@@ -1,72 +1,72 @@
-### Schema Plan
+# Schema Plan
 
 ## Reference tables
 
-# trading_calendar
+### trading_calendar
 - Row: One NYSE trading day
 - Primary key: trading_day
 - Why: Defines NYSE open/close for intraday vs overnight and rolls weekends/holidays to the next trading day.
 
-# security_master
+### security_master
 - Row: One S&P 500 company/security in your universe
 - Primary key: secid
 - Why: Stable internal ID that doesn’t change when tickers/mergers happen.
 
-# identifier_history
+### identifier_history
 - Row: One external identifier active for a company over a validity window
 - Primary key: (secid, id_type, id_value, effective_start)
 - Why: Maps secid to ticker/CIK/FIGI/etc. across time so joins don’t break.
 
-# sp500_membership
+### sp500_membership
 - Row: One company on one trading day
 - Primary key: (secid, trading_day)
 - Why: Daily membership to avoid survivorship bias and to define the investable universe.
 
-# corporate_actions
+### corporate_actions
 - Row: One corporate action for a company on an effective date
 - Primary key: (secid, ex_date, action_type)
 - Why: Splits/dividends/buybacks to reconstruct open/close returns if vendor adjustments don’t match the paper’s conventions.
 
 ## Time-series tables
 
-# prices_daily
+### prices_daily
 - Row: One company on one trading day (OHLCV)
 - Primary key: (secid, trading_day)
 - Why: Source for intraday (open→close) and overnight (close→next open) returns; base for momentum/volatility.
 
-# topic_exposure_daily
+### topic_exposure_daily
 - Row: One company × trading day × period (i|o) × topic
 - Primary key: (secid, trading_day, period, topic_id)
 - Why: Sum of article-level topic probabilities for that firm within the session (intraday/overnight).
 
-# topic_exposure_yearly
+### topic_exposure_yearly
 - Row: One company × model year t × period × topic
 - Primary key: (secid, year_t, period, topic_id)
 - Why: Yearly cumulative exposures used in cross-sectional regressions and forecasts.
 
-# controls_yearly
+### controls_yearly
 - Row: One company × model year t
 - Primary key: (secid, year_t)
 - Why: Stores size, book-to-market (asinh if used), investment, profitability, 12-month momentum (skip 1), and intraday/overnight vol (raw + demeaned).
 
 ## Model/artifact tables
 
-# news_article
+### news_article
 - Row: One news article
 - Primary key: article_id
 - Why: Holds publish timestamp (UTC), source, headline, body text/raw JSON; used to assign the article to a trading day & period and link it to firms.
 
-# article_company_link
+### article_company_link
 - Row: One (article, company) mention
 - Primary key: (article_id, secid)
 - Why: Connects articles to firms (provider tags or NER); basis for aggregating exposures.
 
-# lda_model
+### lda_model
 - Row: One frozen LDA
 - Primary key: model_id
 - Why: Records K (e.g., 200), training window, seed, preprocessing parameters; ensures reproducibility/versioning.
 
-# lda_art_topic
+### lda_art_topic
 - Row: One (article, topic) probability from a specific model vintage
 - Primary key: (article_id, topic_id)
 - Why: Document–topic distribution; atomic inputs summed into firm/session exposures.
