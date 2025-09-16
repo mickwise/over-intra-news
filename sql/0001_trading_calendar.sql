@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS trading_calendar (
     -- NYSE trading date
     trading_day date PRIMARY KEY,
     -- e.g., 2024-09-03 13:30:00+00 (09:30 ET)
-    session_open_utc timestamptz NOT NULL,
+    session_open_utc timestamptz,
     -- e.g., 2024-09-03 20:00:00+00 (16:00 ET)
-    session_close_utc timestamptz NOT NULL,
+    session_close_utc timestamptz,
     -- false for full market-closed days
     is_trading_day boolean NOT NULL DEFAULT true,
     is_weekend boolean NOT NULL DEFAULT false,

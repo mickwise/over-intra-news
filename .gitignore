@@ -238,3 +238,7 @@ pgdata/
 
 # VSCode
 **/.vscode/
+
+# notes
+improvements.md
+tasks.md
