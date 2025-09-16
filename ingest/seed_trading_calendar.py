@@ -23,6 +23,7 @@ Conventions
 import datetime
 import os
 from typing import List, Optional, Tuple, TypeAlias
+
 import exchange_calendars as xcals
 import pandas as pd
 import psycopg2
@@ -73,7 +74,8 @@ def connect_to_db() -> connection:
     KeyError
         If any required environment variable is missing.
     psycopg2.OperationalError
-        If the connection cannot be established (bad credentials, host unreachable, etc.).
+        If the connection cannot be established
+        (bad credentials, host unreachable, etc.).
     """
     return psycopg2.connect(
         host=os.environ["DB_HOST"],
