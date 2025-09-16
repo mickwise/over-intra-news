@@ -22,7 +22,7 @@ Conventions
 
 import datetime
 import os
-from typing import List, Tuple, TypeAlias
+from typing import List, Optional, Tuple, TypeAlias
 import exchange_calendars as xcals
 import pandas as pd
 import psycopg2
@@ -31,7 +31,13 @@ from dotenv import load_dotenv
 from psycopg2.extensions import connection
 
 TradingCalendarRow: TypeAlias = Tuple[
-    datetime.date, datetime.datetime, datetime.datetime, bool, bool, bool, bool
+    datetime.date,
+    Optional[datetime.datetime],
+    Optional[datetime.datetime],
+    bool,
+    bool,
+    bool,
+    bool,
 ]
 
 
@@ -117,7 +123,9 @@ def ingest_nyse() -> None:
         conn.close()
 
 
-def fill_db(conn: connection, nyse_cal: pd.DataFrame) -> List[TradingCalendarRow]:
+def fill_db(
+    conn: connection, nyse_cal: pd.DataFrame
+) -> List[TradingCalendarRow | None]:
     """
     Iterate the NYSE schedule and build batched rows for `trading_calendar`.
 
@@ -195,6 +203,9 @@ def extract_row(row: pd.Series) -> TradingCalendarRow:
     - `is_half_day` is True iff session duration < 6.5 hours.
     - Weekend is computed on the civil date (Mon=0,...,Sun=6).
     """
+    # Fix typing
+    if not isinstance(row.name, pd.Timestamp):
+        raise TypeError("Row index must be a pd.Timestamp")
     trading_day: datetime.date = row.name.date()
     session_open_utc: datetime.datetime = row["open"]
     session_close_utc: datetime.datetime = row["close"]
@@ -203,7 +214,7 @@ def extract_row(row: pd.Series) -> TradingCalendarRow:
     )
     is_half_day: bool = False
     if is_trading_day:
-        curr_day_intra_seconds: int = (
+        curr_day_intra_seconds: float = (
             session_close_utc - session_open_utc
         ).total_seconds()
         is_half_day = curr_day_intra_seconds < 6.5 * SECONDS_IN_HOUR
@@ -221,7 +232,7 @@ def extract_row(row: pd.Series) -> TradingCalendarRow:
     )
 
 
-def execute_batch(conn: connection, batch: List[TradingCalendarRow]) -> None:
+def execute_batch(conn: connection, batch: List[TradingCalendarRow | None]) -> None:
     """
     Upsert a batch of rows into `trading_calendar`.
 
@@ -266,7 +277,7 @@ def execute_batch(conn: connection, batch: List[TradingCalendarRow]) -> None:
 
 def handle_gap_days(
     non_trading_days: List[datetime.date],
-    batch: List[TradingCalendarRow],
+    batch: List[TradingCalendarRow | None],
     conn: connection,
     curr_batch_idx: int,
 ) -> int:
