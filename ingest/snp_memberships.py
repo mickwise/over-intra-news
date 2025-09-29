@@ -17,7 +17,6 @@ Conventions
 - Input CSV is expected to have columns: `date` (YYYY-MM-DD), `tickers` (comma-separated tickers).
 - Data source is the open-source GitHub repository `fja05680/sp500`, 
   pinned to commit `0803e40971b4e470fd3b3bef107b3c6bae579cfc` for reproducibility.
-- This module does not write to any database or S3; it is read-only and pure.
 
 Downstream usage
 ----------------
