@@ -30,10 +30,10 @@ jobs:
             mypy ruff black
 
       - name: Ruff (lint)
-        run: ruff check ingest
+        run: ruff check $(git ls-files '*.py')
 
       - name: Black (format check)
-        run: black --check ingest
+        run: black --check $(git ls-files '*.py')
 
       - name: MyPy (type check)
-        run: mypy ingest
+        run: mypy -p aws/ccnews_sampler - p ingest

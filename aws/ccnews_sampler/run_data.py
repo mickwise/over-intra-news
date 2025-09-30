@@ -22,6 +22,7 @@ Downstream usage
 Instantiate once at process start and pass to helpers such as
 `extract_sample(run_data)`.
 """
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -69,6 +70,7 @@ class RunData:
     - Objects referenced here (DataFrame, logger, RNG) are held by reference,
       not copied.
     """
+
     bucket: str
     key: str
     year: str

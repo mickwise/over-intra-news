@@ -22,15 +22,18 @@ Downstream usage
 Use `build_data_maps(nyse_cal)` once per run, then read from the returned
 `DataMaps` object inside the WARC scan loop for E[O(1)] lookup.
 """
+
 from dataclasses import dataclass
-from typing import Iterable, TypeAlias
+from typing import Iterable, TypeAlias, cast
+
 import numpy as np
 import pandas as pd
 
 SessionCaps: TypeAlias = tuple[int, int]
-SessionTimes: TypeAlias = tuple[int|None, int|None]
+SessionTimes: TypeAlias = tuple[int | None, int | None]
 
 DATE_FMT = "%Y-%m-%d"
+
 
 @dataclass
 class DataMaps:
@@ -69,6 +72,7 @@ class DataMaps:
     valid_date_set : set[str]
         All date keys present in the calendar slice (for fast membership tests).
     """
+
     cap_dict: dict[str, SessionCaps]
     session_dict: dict[str, SessionTimes]
     valid_date_set: set[str]
@@ -102,17 +106,14 @@ def build_data_maps(nyse_cal: pd.DataFrame) -> DataMaps:
     - Date keys are formatted as '%Y-%m-%d' (New York civil dates).
     - Session epoch seconds are UTC-based; non-trading days map to (None, None).
     """
-    str_dates: pd.Series = nyse_cal.index.strftime(DATE_FMT)
+    dt_index: pd.DatetimeIndex = cast(pd.DatetimeIndex, nyse_cal.index)
+    str_dates: pd.Series = pd.Series(dt_index.strftime(DATE_FMT))
     valid_date_set: set[str] = set(str_dates)
-    cap_dict: dict[str, SessionCaps] = (
-        build_cap_dict(str_dates, nyse_cal[["intraday_cap", "overnight_cap"]])
+    cap_dict: dict[str, SessionCaps] = build_cap_dict(
+        str_dates, nyse_cal[["intraday_cap", "overnight_cap"]]
     )
     session_dict: dict[str, SessionTimes] = build_session_dict(str_dates, nyse_cal)
-    return DataMaps(
-        cap_dict=cap_dict,
-        session_dict=session_dict,
-        valid_date_set=valid_date_set
-    )
+    return DataMaps(cap_dict=cap_dict, session_dict=session_dict, valid_date_set=valid_date_set)
 
 
 def build_cap_dict(str_dates: pd.Series, caps: pd.DataFrame) -> dict[str, SessionCaps]:
@@ -174,25 +175,29 @@ def build_session_dict(str_dates: pd.Series, nyse_cal: pd.DataFrame) -> dict[str
     non_trading_days_set = set(str_dates[non_trading_days_mask])
     session_open_seconds: pd.Series = to_seconds(nyse_cal["session_open_utc"])
     session_close_seconds: pd.Series = to_seconds(nyse_cal["session_close_utc"])
-    session_times: Iterable[tuple[str, np.int64, np.int64]] = zip(str_dates, session_open_seconds, session_close_seconds)
-    return {date: (int(open_sec), int(close_sec)) if date not in non_trading_days_set
-            else (None, None) for date, (open_sec, close_sec) in session_times}
+    session_times: Iterable[tuple[str, tuple[np.int64, np.int64]]] = zip(
+        str_dates, zip(session_open_seconds, session_close_seconds)
+    )
+    return {
+        date: (int(open_sec), int(close_sec)) if date not in non_trading_days_set else (None, None)
+        for date, (open_sec, close_sec) in session_times
+    }
 
 
-def to_seconds(ts: pd.Series | pd.Timestamp) -> pd.Series | pd.Timestamp:
+def to_seconds(ts: pd.Series) -> pd.Series:
     """
     Convert a tz-aware datetime Series to UTC epoch seconds (vectorized).
 
     Parameters
     ----------
-    ts : pd.Series | pd.Timestamp
+    ts : pd.Series
         Pandas Series of timezone-aware timestamps (dtype like
-        'datetime64[ns, tz]') or a pandas timestamp. May contain NaT.
+        'datetime64[ns, tz]'). May contain NaT.
 
     Returns
     -------
     pd.Series
-        Int64 Series or single int of seconds since Unix epoch (UTC).
+        Int64 Series of seconds since Unix epoch (UTC).
 
     Raises
     ------
@@ -203,8 +208,35 @@ def to_seconds(ts: pd.Series | pd.Timestamp) -> pd.Series | pd.Timestamp:
     -----
     - Implementation is fully vectorized: tz_convert → view('int64') → // 1e9.
     - This helper does not alter the input and avoids Python-level loops.
+    - NaT values propagate as <NA> in the returned Int64 Series.
     """
-    if isinstance(ts, pd.Series):
-        return ts.dt.tz_convert("UTC").view("int64") // 1_000_000_000
-    else:
-        return int(ts.tz_convert("UTC").view("int64") // 1_000_000_000)
+    return ts.dt.tz_convert("UTC").view("int64") // 1_000_000_000
+
+
+def to_seconds_int(ts: pd.Timestamp) -> int:
+    """
+    Convert a single tz-aware pandas Timestamp to UTC epoch seconds.
+
+    Parameters
+    ----------
+    ts : pd.Timestamp
+        Pandas Timestamp object that is timezone-aware. Must not be tz-naive.
+
+    Returns
+    -------
+    int
+        Seconds since Unix epoch (UTC).
+
+    Raises
+    ------
+    TypeError
+        If `ts` is not datetime-like or is tz-naive.
+
+    Notes
+    -----
+    - This is the scalar equivalent of `to_seconds` for working with a single
+      Timestamp instead of a Series.
+    - Uses the `.tz_convert("UTC")` accessor and integer nanoseconds (`.value`)
+      divided by 1e9 to yield whole seconds.
+    """
+    return int(ts.tz_convert("UTC")) // 1_000_000_000

@@ -14,7 +14,7 @@ module = ["exchange_calendars.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
-line-length = 88
+line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
@@ -22,7 +22,7 @@ select = ["E", "F", "I"]
 ignore = []
 
 [tool.black]
-line-length = 88
+line-length = 100
 target-version = ["py313"]
 
 [tool.pytest.ini_options]

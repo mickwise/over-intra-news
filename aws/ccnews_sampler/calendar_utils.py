@@ -1,4 +1,4 @@
-'''
+"""
 Purpose
 -------
 Fetch a month slice of the NYSE trading calendar from Postgres and provide basic
@@ -19,14 +19,20 @@ Conventions
 
 Downstream usage
 ----------------
-Call `extract_nyse_cal(year, month)` to obtain the month’s calendar, then pass
-it to quota computation and WARC scanning modules.
+- Call `extract_nyse_cal(year, month)` to obtain the month’s calendar, then pass
+  it to quota computation and WARC scanning modules.
+- Returned calendar has a `DatetimeIndex` at runtime; static type checkers
+  may still require `cast(pd.DatetimeIndex, calendar.index)` downstream.
 
-'''
+"""
+
 import datetime as dt
+
 import pandas as pd
 from psycopg2.extensions import connection
-from db_utils import connect_to_db
+
+from ingest.db_utils import connect_to_db
+
 
 def month_bounds(year: int, month: int) -> tuple[dt.date, dt.date]:
     """
@@ -108,21 +114,22 @@ def extract_nyse_cal(year: str, month: str) -> pd.DataFrame:
     Notes
     -----
     - Uses `parse_dates=["trading_day"]` so the index is datetime-like.
+    - The index is enforced as a `DatetimeIndex` named "trading_day".
+      At runtime this avoids further wrapping; with MyPy, explicit `cast`
+      may still be needed to satisfy type inference.
+
     """
     conn: connection = connect_to_db()
     try:
         query: str = build_calendar_query()
         time_bounds = month_bounds(int(year), int(month))
-        calendar: pd.DataFrame =  pd.read_sql(
-            query,
-            conn,
-            index_col='trading_day',
-            params=time_bounds,
-            parse_dates=['trading_day']
-            )
+        calendar: pd.DataFrame = pd.read_sql(
+            query, conn, index_col="trading_day", params=time_bounds, parse_dates=["trading_day"]
+        )
+        calendar.index = pd.DatetimeIndex(calendar.index, name="trading_day")
     finally:
         conn.close()
     calendar.sort_index(inplace=True)
-    calendar["session_open_utc"]  = pd.to_datetime(calendar["session_open_utc"],  utc=True)
+    calendar["session_open_utc"] = pd.to_datetime(calendar["session_open_utc"], utc=True)
     calendar["session_close_utc"] = pd.to_datetime(calendar["session_close_utc"], utc=True)
     return calendar

@@ -1,4 +1,4 @@
-'''
+"""
 Purpose
 -------
 Convert an NYSE trading calendar month into per-day sampling caps that split a
@@ -28,17 +28,18 @@ Downstream usage
 Pass the returned DataFrame to the WARC scanner; for each `trading_day`, take at
 most `intraday_cap` links whose timestamps fall inside the session and at most
 `overnight_cap` links outside the session.
-'''
-import pandas as pd
+"""
+
+from typing import cast
+
 import numpy as np
+import pandas as pd
 from numpy import floor
 
 
 def compute_daily_caps(
-        daily_cap: int,
-        nyse_cal: pd.DataFrame,
-        rng: np.random.Generator
-        ) -> pd.DataFrame:
+    daily_cap: int, nyse_cal: pd.DataFrame, rng: np.random.Generator
+) -> pd.DataFrame:
     """
     Compute per-day intraday and overnight sampling caps using randomized rounding.
 
@@ -75,12 +76,10 @@ def compute_daily_caps(
 
     nyse_cal = calculate_minutes(nyse_cal)
     nyse_cal["intraday_frac"] = nyse_cal["minutes_open"] / nyse_cal["day_length_min"] * daily_cap
-    intraday_floor: pd.Series = pd.Series(floor(nyse_cal["intraday_frac"]).astype(int))
+    intraday_floor: pd.Series = floor(nyse_cal["intraday_frac"]).astype(int)
     intraday_frac_rem: pd.Series = (nyse_cal["intraday_frac"] - intraday_floor).clip(0, 1 - 1e-12)
     u: np.ndarray = rng.random(len(nyse_cal))
-    nyse_cal["intraday_cap"] = (
-        intraday_floor + (u < intraday_frac_rem).astype(int)
-    )
+    nyse_cal["intraday_cap"] = intraday_floor + (u < intraday_frac_rem).astype(int)
     nyse_cal["overnight_cap"] = daily_cap - nyse_cal["intraday_cap"]
     return nyse_cal.drop(columns=["intraday_frac", "minutes_open", "day_length_min"])
 
@@ -111,6 +110,8 @@ def calculate_minutes(nyse_cal: pd.DataFrame) -> pd.DataFrame:
     instants to UTC before differencing.
     - Intended as a preparatory step for `compute_daily_caps`.
     """
+
+    # Calculate minutes_open from UTC session bounds; 0 if non-trading (NULL)
     nyse_cal["minutes_open"] = (
         (nyse_cal["session_close_utc"] - nyse_cal["session_open_utc"])
         .dt.total_seconds()
@@ -119,10 +120,13 @@ def calculate_minutes(nyse_cal: pd.DataFrame) -> pd.DataFrame:
         .astype(int)
     )
 
+    # Calculate local civil day length in America/New_York (DST-aware)
     tz: str = "America/New_York"
-    midnights: pd.Series = nyse_cal.index.dt.normalize()
-    start: pd.Series = midnights.dt.tz_localize(tz).dt.tz_convert("UTC")
-    end: pd.Series = (midnights + pd.Timedelta(days=1)).dt.tz_localize(tz).dt.tz_convert("UTC")
+    dt_index: pd.DatetimeIndex = cast(pd.DatetimeIndex, nyse_cal.index)
+    midnights: pd.DatetimeIndex = dt_index.normalize()
+    start: pd.DatetimeIndex = midnights.tz_localize(tz).tz_convert("UTC")
+    end: pd.DatetimeIndex = midnights + pd.Timedelta(days=1)
+    end = end.tz_localize(tz).tz_convert("UTC")
     nyse_cal["day_length_min"] = ((end - start) / pd.Timedelta(minutes=1)).astype(int)
 
     return nyse_cal

@@ -1,4 +1,4 @@
-'''
+"""
 Purpose
 -------
 Emit structured, one-line JSON logs for the news sampling pipeline. Centralizes
@@ -24,7 +24,8 @@ Downstream usage
 Instantiate once per process and call `emit(event, level, context=...)` at key
 checkpoints. Later filter by `event` or `level`, or group by `run_id`
 to analyze an entire execution.
-'''
+"""
+
 import datetime as dt
 import json
 
@@ -62,12 +63,7 @@ class RunLogger:
     - Designed for machine parsing (one JSON object per line).
     """
 
-    def __init__(
-            self,
-            run_id: str,
-            shard_name: str,
-            run_meta: dict
-            ) -> None:
+    def __init__(self, run_id: str, shard_name: str, run_meta: dict) -> None:
         """
         Create a run-scoped logger with fixed metadata fields.
 
@@ -96,13 +92,12 @@ class RunLogger:
         self.shard_name: str = shard_name
         self.run_meta: dict = run_meta
 
-
     def emit(
-            self,
-            event: str,
-            level: str,
-            context: dict | None = None,
-            ) -> None:
+        self,
+        event: str,
+        level: str,
+        context: dict | FinalLogData | None = None,
+    ) -> None:
         """
         Write one structured log event as a single JSON line to STDOUT.
 
@@ -145,7 +140,6 @@ class RunLogger:
             print(f"Logging error: {e}", flush=True)
             print(json.dumps(log_entry, default=str), flush=True)
 
-
     def initial_emission(
         self,
         run_data: RunData,
@@ -176,17 +170,11 @@ class RunLogger:
                 "year": run_data.year,
                 "month": run_data.month,
                 "s3_bucket": run_data.bucket,
-                "s3_key": run_data.key
-            }
+                "s3_key": run_data.key,
+            },
         )
 
-
-    def check_line_count(
-            self,
-            run_context: dict,
-            year: str,
-            month: str
-        ) -> None:
+    def check_line_count(self, run_context: dict, year: str, month: str) -> None:
         """
         Emit a warning summary if unmatched lines were observed.
 
@@ -219,15 +207,14 @@ class RunLogger:
                     "year": year,
                     "month": month,
                     "lines_unmatched": run_context["lines_unmatched"],
-                    "unknown_or_offmonth_examples": run_context["unknown_or_offmonth_examples"]
-                }
+                    "unknown_or_offmonth_examples": run_context["unknown_or_offmonth_examples"],
+                },
             )
 
-
     def samples_emitted(
-            self,
-            final_log_dict: FinalLogData,
-        ) -> None:
+        self,
+        final_log_dict: FinalLogData,
+    ) -> None:
         """
         Emit a terminal summary event after all per-day/session sample files are written.
 
@@ -250,8 +237,4 @@ class RunLogger:
         - Event name: "samples_written" (INFO).
         - Thin wrapper around `emit(...)` to standardize the final summary.
         """
-        self.emit(
-            "samples_written",
-            "INFO",
-            final_log_dict
-        )
+        self.emit("samples_written", "INFO", final_log_dict)

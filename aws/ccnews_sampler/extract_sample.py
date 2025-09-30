@@ -23,17 +23,20 @@ Downstream usage
 - Call `extract_sample(run_data)` to return `{date: {"intraday": [...], "overnight": [...]}}`.
 - Logs include totals, matched/unmatched lines, and sample warnings.
 """
+
 import re
-from typing import List
+from typing import List, cast
+
 import boto3
 import pandas as pd
-from aws.ccnews_sampler.data_maps import DataMaps, build_data_maps, to_seconds
-from aws.ccnews_sampler.run_logger import RunLogger
-from aws.ccnews_sampler.run_data import RunData
+
+from aws.ccnews_sampler.data_maps import DataMaps, build_data_maps, to_seconds_int
 from aws.ccnews_sampler.quota import compute_daily_caps
 from aws.ccnews_sampler.reservoir_sampling import OverIntraSamples, ReservoirManager
+from aws.ccnews_sampler.run_data import RunData
+from aws.ccnews_sampler.run_logger import RunLogger
 
-DATE_TZ  = "America/New_York"
+DATE_TZ = "America/New_York"
 DATE_FMT = "%Y-%m-%d"
 
 
@@ -69,7 +72,8 @@ def extract_sample(run_data: RunData) -> dict[str, OverIntraSamples]:
     logger: RunLogger = run_data.logger
     nyse_cal: pd.DataFrame = run_data.nyse_cal
 
-    str_date_list: List[str] = nyse_cal.index.strftime(DATE_FMT).tolist()
+    dt_index: pd.DatetimeIndex = cast(pd.DatetimeIndex, nyse_cal.index)
+    str_date_list: List[str] = dt_index.strftime(DATE_FMT).tolist()
 
     run_context: dict = generate_run_context(str_date_list, year, month)
 
@@ -77,33 +81,17 @@ def extract_sample(run_data: RunData) -> dict[str, OverIntraSamples]:
 
     nyse_cal = compute_daily_caps(run_data.daily_cap, nyse_cal, run_data.rng)
     data_maps: DataMaps = build_data_maps(nyse_cal)
-    reservoir_manager: ReservoirManager = ReservoirManager(
-        data_maps.cap_dict,
-        run_data.rng
-    )
+    reservoir_manager: ReservoirManager = ReservoirManager(data_maps.cap_dict, run_data.rng)
 
-    fill_reservoirs(
-        run_context,
-        run_data,
-        data_maps,
-        reservoir_manager
-    )
+    fill_reservoirs(run_context, run_data, data_maps, reservoir_manager)
 
-    logger.emit(
-        "month_scan_finished",
-        "INFO",
-        run_context
-    )
+    logger.emit("month_scan_finished", "INFO", run_context)
 
     logger.check_line_count(run_context, year, month)
     return reservoir_manager.extract_sample_dict()
 
 
-def generate_run_context(
-        days: List[str],
-        year: str,
-        month: str
-    ) -> dict:
+def generate_run_context(days: List[str], year: str, month: str) -> dict:
     """
     Initialize counters and metadata for a month’s scan.
 
@@ -129,16 +117,13 @@ def generate_run_context(
         "lines_unmatched": 0,
         "per_day_intraday_count": {date: 0 for date in days},
         "per_day_overnight_count": {date: 0 for date in days},
-        "unknown_or_offmonth_examples": []
+        "unknown_or_offmonth_examples": [],
     }
 
 
 def fill_reservoirs(
-        run_context: dict,
-        run_data: RunData,
-        data_maps: DataMaps,
-        reservoir_manager: ReservoirManager
-    ) -> None:
+    run_context: dict, run_data: RunData, data_maps: DataMaps, reservoir_manager: ReservoirManager
+) -> None:
     """
     Read the monthly queue stream and update per-day/session reservoirs.
 
@@ -164,16 +149,16 @@ def fill_reservoirs(
       as unmatched with up to 5 examples for diagnostics.
     - Admission into reservoirs is always attempted; memory stays bounded per cap.
     """
-    s3_client = boto3.client('s3')
-    queue_stream = s3_client.get_object(Bucket=run_data.bucket, Key=run_data.key)['Body']
-    date_pattern: re.Pattern[str] = (
-        re.compile(rf"CC-NEWS-({run_data.year}{run_data.month}\d{{2}})-(\d{{6}})")
+    s3_client = boto3.client("s3")
+    queue_stream = s3_client.get_object(Bucket=run_data.bucket, Key=run_data.key)["Body"]
+    date_pattern: re.Pattern[str] = re.compile(
+        rf"CC-NEWS-({run_data.year}{run_data.month}\d{{2}})-(\d{{6}})"
     )
     with queue_stream as stream:
         for line in stream.iter_lines():
-            line = line.decode('utf-8')
+            line = line.decode("utf-8")
             run_context["lines_total"] += 1
-            parsed: tuple[pd.Timestamp, str] = extract_link_date(line, date_pattern)
+            parsed: tuple[pd.Timestamp, str] | None = extract_link_date(line, date_pattern)
             if not parsed:
                 handle_erroneous_line(line, run_context)
                 continue
@@ -185,19 +170,11 @@ def fill_reservoirs(
                     continue
                 else:
                     handle_correct_line(
-                        line,
-                        utc_date,
-                        date_key,
-                        run_context,
-                        data_maps,
-                        reservoir_manager
-                        )
+                        line, utc_date, date_key, run_context, data_maps, reservoir_manager
+                    )
 
 
-def extract_link_date(
-        line: str,
-        date_pattern: re.Pattern[str]
-    ) -> tuple[pd.Timestamp, str] | None:
+def extract_link_date(line: str, date_pattern: re.Pattern[str]) -> tuple[pd.Timestamp, str] | None:
     """
     Parse the CC-NEWS timestamp from a WARC path and derive the trading date key.
 
@@ -219,9 +196,9 @@ def extract_link_date(
     """
     regex_result: re.Match[str] | None = re.search(date_pattern, line)
     if regex_result:
-        date_groups: tuple[str] = regex_result.groups()
-        utc_date: pd.Timestamp = (
-            pd.to_datetime("".join(date_groups), format="%Y%m%d%H%M%S", utc=True)
+        date_groups: tuple[str] = cast(tuple[str], regex_result.groups())
+        utc_date: pd.Timestamp = pd.to_datetime(
+            "".join(date_groups), format="%Y%m%d%H%M%S", utc=True
         )
         date_key = utc_date.tz_convert(DATE_TZ).strftime(DATE_FMT)
         return utc_date, date_key
@@ -229,9 +206,9 @@ def extract_link_date(
 
 
 def handle_erroneous_line(
-        line: str,
-        run_context: dict,
-    ) -> None:
+    line: str,
+    run_context: dict,
+) -> None:
     """
     Record an unmatched or off-month line in the run context.
 
@@ -256,13 +233,13 @@ def handle_erroneous_line(
 
 
 def handle_correct_line(
-        line: str,
-        utc_date: pd.Timestamp,
-        date_key: str,
-        run_context: dict,
-        data_maps: DataMaps,
-        reservoir_manager: ReservoirManager
-    ) -> None:
+    line: str,
+    utc_date: pd.Timestamp,
+    date_key: str,
+    run_context: dict,
+    data_maps: DataMaps,
+    reservoir_manager: ReservoirManager,
+) -> None:
     """
     Route a valid line to the correct session reservoir and update counters.
 
@@ -295,9 +272,10 @@ def handle_correct_line(
     """
     intraday_cap, overnight_cap = data_maps.cap_dict[date_key]
     current_session_open, current_session_close = data_maps.session_dict[date_key]
-    current_date_seconds = to_seconds(utc_date)
+    current_date_seconds = to_seconds_int(utc_date)
     intra_day_condition = (
-        current_session_open is not None and current_session_close is not None
+        current_session_open is not None
+        and current_session_close is not None
         and current_session_open <= current_date_seconds < current_session_close
     )
     if intra_day_condition:

@@ -26,28 +26,85 @@ Downstream usage
 This module is launched by the shell wrapper. The main entry point is `main()`,
 which returns no value and writes logs to STDOUT and samples to S3.
 """
+
 import hashlib
+import json
 import os
 import posixpath
 import sys
-import json
-from typing import List, TypeAlias
+from typing import Any, List, TypeAlias, TypedDict
+
+import boto3
 import numpy as np
 import pandas as pd
-import boto3
+
 from aws.ccnews_sampler.calendar_utils import extract_nyse_cal
-from aws.ccnews_sampler.run_logger import RunLogger
 from aws.ccnews_sampler.extract_sample import extract_sample
 from aws.ccnews_sampler.reservoir_sampling import OverIntraSamples
 from aws.ccnews_sampler.run_data import RunData
-
+from aws.ccnews_sampler.run_logger import RunLogger
 
 CLIArguments: TypeAlias = tuple[str, str, str, str, int]
 ExportedVariables: TypeAlias = tuple[str, str, dict]
-FinalLogData: TypeAlias = dict[str, str, str, int, int]
 
 
-def main():
+class FinalLogData(TypedDict):
+    """
+    Purpose
+    -------
+    Structured dictionary representing the summary payload for a monthly
+    sampling run. Exists to enforce key presence and type safety for log
+    emission and downstream consumers.
+
+    Key behaviors
+    -------------
+    - Provides fixed keys for year/month identifiers, output path, and counters.
+    - Starts counters at zero; values are incremented during the run.
+
+    Parameters
+    ----------
+    year : str
+        Four-digit year token (e.g., "2024").
+    month : str
+        Two-digit month token (e.g., "09").
+    output_prefix : str
+        S3 prefix under which sample files will be written (e.g., "2019/03").
+    days_processed : int
+        Number of trading days processed; initialized to 0 and incremented
+        by the writer.
+    files_written : int
+        Number of sample files written; initialized to 0 and incremented
+        by the writer.
+
+    Attributes
+    ----------
+    year : str
+        Four-digit year string, immutable once set.
+    month : str
+        Two-digit month string, immutable once set.
+    output_prefix : str
+        Target S3 prefix for run output, constant throughout the run.
+    days_processed : int
+        Mutable counter tracking processed trading days.
+    files_written : int
+        Mutable counter tracking number of output files written.
+
+    Notes
+    -----
+    - `FinalLogData` is intended for logging/serialization only and does not
+      provide methods or validation.
+    - TypedDict is used instead of a dataclass to remain lightweight and
+      JSON-serializable with minimal overhead.
+    """
+
+    year: str
+    month: str
+    output_prefix: str
+    days_processed: int
+    files_written: int
+
+
+def main() -> None:
     """
     Entry point for a single-month run.
 
@@ -78,7 +135,7 @@ def main():
     # Initialize random seed for reproducibility
     hash_func = hashlib.new("sha256")
     run_seed: str = year + month
-    hash_func.update(run_seed.encode('utf-8'))
+    hash_func.update(run_seed.encode("utf-8"))
     rng: np.random.Generator = np.random.default_rng(int(hash_func.hexdigest(), 16) % (2**64))
 
     # Extract NYSE trading calendar for month
@@ -92,7 +149,7 @@ def main():
         daily_cap=daily_cap,
         nyse_cal=nyse_cal,
         logger=logger,
-        rng=rng
+        rng=rng,
     )
 
     sampling_dict: dict[str, OverIntraSamples] = extract_sample(run_data)
@@ -136,9 +193,9 @@ def extract_exported_vars() -> ExportedVariables:
     tuple[str, str, dict]
         (run_id, shard_name, run_meta) with run_meta parsed from JSON.
     """
-    run_id: str = os.environ['RUN_ID']
-    shard_name: str = os.environ['SHARD_NAME']
-    run_meta: dict = json.loads(os.environ['RUN_META_JSON'])
+    run_id: str = os.environ["RUN_ID"]
+    shard_name: str = os.environ["SHARD_NAME"]
+    run_meta: dict = json.loads(os.environ["RUN_META_JSON"])
     return run_id, shard_name, run_meta
 
 
@@ -164,9 +221,9 @@ def extract_cli_args() -> CLIArguments:
 
 
 def write_samples_to_s3(
-        sampling_dict: dict[str, OverIntraSamples],
-        run_data: RunData,
-    ) -> None:
+    sampling_dict: dict[str, OverIntraSamples],
+    run_data: RunData,
+) -> None:
     """
     Persist sampled links to S3 under the month prefix derived from `run_data.key`.
 
@@ -199,7 +256,7 @@ def write_samples_to_s3(
     """
     bucket: str = run_data.bucket
     key: str = run_data.key
-    s3_client = boto3.client('s3')
+    s3_client: Any = boto3.client("s3")
     output_prefix: str = posixpath.dirname(key)
     final_log_dict: FinalLogData = create_final_log_dict(
         run_data,
@@ -207,24 +264,19 @@ def write_samples_to_s3(
     )
     for date_str, samples in sampling_dict.items():
         final_log_dict["days_processed"] += 1
-        current_day: str = date_str.split('-')[-1]
-        for session in ['intraday', 'overnight']:
+        current_day: str = date_str.split("-")[-1]
+        for session in ["intraday", "overnight"]:
             final_log_dict["files_written"] += 1
             fill_session_dir(
-                s3_client,
-                session,
-                output_prefix,
-                current_day,
-                bucket,
-                samples[session]
+                s3_client, session, output_prefix, current_day, bucket, samples[session]
             )
     run_data.logger.samples_emitted(final_log_dict)
 
 
 def create_final_log_dict(
-        run_data: RunData,
-        output_prefix: str,
-    ) -> FinalLogData:
+    run_data: RunData,
+    output_prefix: str,
+) -> FinalLogData:
     """
     Build the initial payload for the final samples summary log.
 
@@ -257,18 +309,18 @@ def create_final_log_dict(
         "month": run_data.month,
         "output_prefix": output_prefix,
         "days_processed": 0,
-        "files_written": 0
+        "files_written": 0,
     }
 
 
 def fill_session_dir(
-        s3_client,
-        session: str,
-        output_prefix: str,
-        current_day: str,
-        bucket: str,
-        samples: List[str]
-    ) -> None:
+    s3_client: Any,
+    session: str,
+    output_prefix: str,
+    current_day: str,
+    bucket: str,
+    samples: List[str],
+) -> None:
     """
     Write one session’s sample file for a given day.
 
@@ -296,17 +348,13 @@ def fill_session_dir(
     - Writes to `<output_prefix>/<current_day>/<session>/samples.txt`.
     - Content is UTF-8 text, one link per line.
     """
-    output_path: str = posixpath.join(
-        output_prefix,
-        f"{current_day}/{session}/samples.txt"
-    )
+    output_path: str = posixpath.join(output_prefix, f"{current_day}/{session}/samples.txt")
     s3_client.put_object(
         Bucket=bucket,
         Key=output_path,
-        Body='\n'.join(samples).encode('utf-8'),
-        ContentType='text/plain',
-        charset='utf-8'
-
+        Body="\n".join(samples).encode("utf-8"),
+        ContentType="text/plain",
+        charset="utf-8",
     )
 
 

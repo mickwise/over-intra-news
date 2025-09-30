@@ -24,6 +24,7 @@ Downstream usage
 - After the scan, read `manager.reservoir_dict[date]["intraday"].samples`
   (and "overnight") to get the uniformly-sampled results.
 """
+
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -31,8 +32,8 @@ import numpy as np
 
 from aws.ccnews_sampler.data_maps import SessionCaps
 
-
 OverIntraSamples: TypeAlias = dict[str, list[str]]
+
 
 @dataclass
 class Reservoir:
@@ -75,11 +76,11 @@ class Reservoir:
     - Not thread-safe. If using concurrency, shard reservoirs per worker or
       protect access externally.
     """
+
     cap: int
     samples: list[str]
     rng: np.random.Generator
     seen_count: int = 0
-
 
     def consider(self, candidate: str) -> None:
         """
@@ -105,7 +106,7 @@ class Reservoir:
         if current_sample_amount < self.cap:
             self.samples.append(candidate)
         else:
-            j: int = self.rng.integers(0, self.seen_count)
+            j: np.int64 = self.rng.integers(0, self.seen_count)
             if j < self.cap:
                 self.samples[j] = candidate
 
@@ -140,26 +141,16 @@ class ReservoirManager:
       child RNGs per reservoir.
     """
 
-    def __init__(
-            self,
-            cap_dict: dict[str, SessionCaps],
-            rng: np.random.Generator
-        ) -> None:
+    def __init__(self, cap_dict: dict[str, SessionCaps], rng: np.random.Generator) -> None:
         self.reservoir_dict: dict[str, dict[str, Reservoir]] = {
             date: {
                 "intraday": Reservoir(cap=cap[0], samples=[], rng=rng),
-                "overnight": Reservoir(cap=cap[1], samples=[], rng=rng)
+                "overnight": Reservoir(cap=cap[1], samples=[], rng=rng),
             }
             for date, cap in cap_dict.items()
-    }
+        }
 
-
-    def sample(
-            self,
-            candidate: str,
-            date: str,
-            session: str
-        ) -> None:
+    def sample(self, candidate: str, date: str, session: str) -> None:
         """
         Route a candidate item to the appropriate per-day/session reservoir.
 
@@ -187,7 +178,6 @@ class ReservoirManager:
         probability `cap / seen_count` by replacing a random existing item.
         """
         self.reservoir_dict[date][session].consider(candidate)
-
 
     def extract_sample_dict(self) -> dict[str, OverIntraSamples]:
         """
@@ -217,7 +207,7 @@ class ReservoirManager:
         return {
             date: {
                 "intraday": reservoir_info["intraday"].samples,
-                "overnight": reservoir_info["overnight"].samples
+                "overnight": reservoir_info["overnight"].samples,
             }
             for date, reservoir_info in self.reservoir_dict.items()
         }
