@@ -36,4 +36,4 @@ jobs:
         run: black --check $(git ls-files '*.py')
 
       - name: MyPy (type check)
-        run: mypy -p aws/ccnews_sampler - p ingest
+        run: mypy

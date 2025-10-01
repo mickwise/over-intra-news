@@ -240,5 +240,4 @@ pgdata/
 **/.vscode/
 
 # notes
-improvements.md
-tasks.md
+**/notes/

@@ -31,7 +31,7 @@ import datetime as dt
 import pandas as pd
 from psycopg2.extensions import connection
 
-from ingest.db_utils import connect_to_db
+from infra.utils.db_utils import connect_to_db
 
 
 def month_bounds(year: int, month: int) -> tuple[dt.date, dt.date]:
