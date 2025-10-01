@@ -21,13 +21,10 @@ jobs:
           key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-${{ runner.os }}-
 
-      - name: Install check-time deps (no project build)
+      - name: Install project + dev dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install \
-            pandas psycopg2-binary exchange_calendars python-dotenv \
-            pandas-stubs types-psycopg2 \
-            mypy ruff black
+          pip install -e ".[dev]"
 
       - name: Ruff (lint)
         run: ruff check $(git ls-files '*.py')

@@ -1,6 +1,31 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Not a distributable package — just central config for tools used in CI
 # ─────────────────────────────────────────────────────────────────────────────
+[project]
+name = "over-intra-news"
+version = "0.0.0"
+requires-python = ">=3.13"
+
+dependencies = [
+  "pandas",
+  "psycopg2-binary",
+  "exchange_calendars",
+  "python-dotenv",
+  "requests",
+  "boto3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy",
+  "ruff",
+  "black",
+  "pandas-stubs",
+  "types-psycopg2",
+  "types-requests",
+  "boto3-stubs",
+]
+
 [tool.mypy]
 python_version = "3.13"
 warn_unused_ignores = true
