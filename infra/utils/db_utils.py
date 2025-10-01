@@ -24,15 +24,15 @@ Import `connect_to_db()` from this module in any ingestion script
 to open a Postgres session within a context that handles
 transactions and cleanup explicitly.
 """
+
+import datetime as dt
 import os
 from typing import Callable, Iterable, List, Optional
 
 import pandas as pd
-import datetime as dt
 import psycopg2
-from psycopg2.extras import execute_values
 from psycopg2.extensions import connection
-
+from psycopg2.extras import execute_values
 
 BATCH_SIZE: int = 1000
 CHUNK_SIZE: int = 100
@@ -91,7 +91,7 @@ def load_into_table(conn: connection, row_generator: Iterable[tuple], input_quer
 
 
 def str_to_timestamp(date_str: str) -> pd.Timestamp:
-    return pd.Timestamp(dt.datetime.strptime(date_str, '%Y-%m-%d'), tz="UTC")
+    return pd.Timestamp(dt.datetime.strptime(date_str, "%Y-%m-%d"), tz="UTC")
 
 
 def execute_batch(conn: connection, batch: List, input_query: str) -> None:
@@ -100,15 +100,13 @@ def execute_batch(conn: connection, batch: List, input_query: str) -> None:
 
 
 def process_chunk(
-        chunk: pd.Series,
-        api_key: str,
-        url: str,
-        column_names: List[str],
-        processor: Optional[Callable] = None
-    ) -> pd.DataFrame:
-    profiles: pd.DataFrame = pd.read_json(
-        f"{url}{','.join(chunk)}?apikey={api_key}"
-        )[column_names]
+    chunk: pd.Series,
+    api_key: str,
+    url: str,
+    column_names: List[str],
+    processor: Optional[Callable] = None,
+) -> pd.DataFrame:
+    profiles: pd.DataFrame = pd.read_json(f"{url}{','.join(chunk)}?apikey={api_key}")[column_names]
     if processor:
         profiles = processor(profiles)
     return profiles
