@@ -33,8 +33,8 @@ import os
 import random
 from time import sleep
 from typing import Any, TypeAlias
-import requests
 
+import requests
 
 ExceptionTypes: TypeAlias = tuple[type[BaseException], ...]
 
@@ -50,12 +50,12 @@ RETRYABLE_EXCEPTIONS: ExceptionTypes = (
 
 
 def make_request(
-        url: str,
-        expect_json: bool = True,
-        max_retries: int = 5,
-        backoff_factor: float = 0.5,
-        timeout: tuple[float, float] = (3.05, 10),
-    ) -> requests.Response:
+    url: str,
+    expect_json: bool = True,
+    max_retries: int = 5,
+    backoff_factor: float = 0.5,
+    timeout: tuple[float, float] = (3.05, 10),
+) -> requests.Response:
     """
     Perform a GET request with retry and backoff handling.
 
@@ -97,12 +97,7 @@ def make_request(
     last_exception: BaseException | None = None
     for attempt in range(max_retries):
         try:
-            response: requests.Response = try_request(
-                url,
-                header,
-                timeout,
-                expect_json
-            )
+            response: requests.Response = try_request(url, header, timeout, expect_json)
             return response
         except RETRYABLE_EXCEPTIONS as e:
             last_exception = e
@@ -114,11 +109,8 @@ def make_request(
 
 
 def try_request(
-        url: str,
-        header: dict[str, str],
-        timeout: tuple[float, float],
-        expect_json: bool = True
-    ) -> requests.Response:
+    url: str, header: dict[str, str], timeout: tuple[float, float], expect_json: bool = True
+) -> requests.Response:
     """
     Send a single GET request and perform immediate validation.
 
@@ -146,17 +138,11 @@ def try_request(
         If JSON is expected but Content-Type is not JSON.
     """
 
-    response = requests.get(
-        url,
-        headers=header,
-        timeout=timeout
-    )
+    response = requests.get(url, headers=header, timeout=timeout)
     response.raise_for_status()
     if expect_json:
-        if not 'json' in response.headers.get('Content-Type', '').lower():
-            raise ValueError(
-                f"Expected JSON response, got {response.headers.get('Content-Type')}"
-            )
+        if "json" not in response.headers.get("Content-Type", "").lower():
+            raise ValueError(f"Expected JSON response, got {response.headers.get('Content-Type')}")
     return response
 
 
@@ -180,20 +166,15 @@ def create_header(expect_json: bool = True) -> dict[str, str]:
         If USER_AGENT is not set in environment variables.
     """
 
-    header: dict[str, str] = {
-        "User-Agent": os.environ['USER_AGENT']
-    }
+    header: dict[str, str] = {"User-Agent": os.environ["USER_AGENT"]}
     if expect_json:
         header["Accept"] = "application/json; charset=utf-8"
     return header
 
 
 def check_response(
-        response: Any | None,
-        attempt: int,
-        max_retries: int,
-        backoff_factor: float
-    ) -> None:
+    response: Any | None, attempt: int, max_retries: int, backoff_factor: float
+) -> None:
     """
     Handle retry decisions and sleep between attempts.
 
@@ -219,21 +200,18 @@ def check_response(
     - Does not raise; caller is responsible for re-raising the last exception.
     """
 
-    sleep_time: float = backoff_factor * (2 ** attempt)
+    sleep_time: float = backoff_factor * (2**attempt)
     if response is not None:
-        status_code: Any | None = getattr(response, 'status_code', None)
-        headers: dict = getattr(response, 'headers', {})
+        status_code: Any | None = getattr(response, "status_code", None)
+        headers: dict = getattr(response, "headers", {})
         sleep_time = handle_status_code(status_code, headers, attempt, backoff_factor)
     if attempt < max_retries - 1:
-        sleep(sleep_time*random.uniform(0.9, 1.1))
+        sleep(sleep_time * random.uniform(0.9, 1.1))
 
 
 def handle_status_code(
-        status_code:  Any | None,
-        headers: dict,
-        attempt: int,
-        backoff_factor: float
-    ) -> float:
+    status_code: Any | None, headers: dict, attempt: int, backoff_factor: float
+) -> float:
     """
     Compute backoff sleep duration based on HTTP status.
 
@@ -264,7 +242,7 @@ def handle_status_code(
     - Too Many Requests (429): honors `Retry-After` if numeric, else backoff.
     """
 
-    default_sleep = backoff_factor * (2 ** attempt)
+    default_sleep = backoff_factor * (2**attempt)
 
     if status_code in RETRYABLE_STATUS_CODES:
         return default_sleep
