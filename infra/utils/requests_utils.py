@@ -16,7 +16,7 @@ Key behaviors
 Conventions
 -----------
 - Retries use exponential backoff: `backoff_factor * (2 ** attempt)`.
-- Random jitter (± ~1s) is added to spread concurrent retries.
+- Random jitter (± ~10%) is added to spread concurrent retries.
 - Treats 400–404 as non-retryable (fails fast).
 - Always requires a `USER_AGENT` environment variable.
 - Timeout is a tuple `(connect_timeout, read_timeout)` passed directly to
@@ -29,9 +29,12 @@ Do not parse or interpret JSON in this module; call `response.json()` in
 the caller after a validated response is returned.
 """
 
+import datetime as dt
+import email.utils as eu
+import math
 import os
 import random
-from time import sleep
+import time
 from typing import Any, TypeAlias
 
 import requests
@@ -47,6 +50,7 @@ RETRYABLE_EXCEPTIONS: ExceptionTypes = (
     requests.RequestException,
     ValueError,
 )
+RETRY_AFTER_ERRORS: ExceptionTypes = (ValueError, TypeError, AttributeError)
 
 
 def make_request(
@@ -54,7 +58,7 @@ def make_request(
     expect_json: bool = True,
     max_retries: int = 5,
     backoff_factor: float = 0.5,
-    timeout: tuple[float, float] = (3.05, 10),
+    timeout: tuple[float, float] = (3.5, 10),
 ) -> requests.Response:
     """
     Perform a GET request with retry and backoff handling.
@@ -69,7 +73,7 @@ def make_request(
         Maximum number of attempts before failing.
     backoff_factor : float, default=0.5
         Base multiplier for exponential backoff.
-    timeout : tuple[float, float], default=(3.05, 10)
+    timeout : tuple[float, float], default=(3.5, 10)
         (connect_timeout, read_timeout) passed to `requests.get`.
 
     Returns
@@ -109,7 +113,10 @@ def make_request(
 
 
 def try_request(
-    url: str, header: dict[str, str], timeout: tuple[float, float], expect_json: bool = True
+    url: str,
+    header: dict[str, str],
+    timeout: tuple[float, float] = (3.5, 10),
+    expect_json: bool = True,
 ) -> requests.Response:
     """
     Send a single GET request and perform immediate validation.
@@ -196,7 +203,8 @@ def check_response(
     Notes
     -----
     - Computes sleep duration based on status code or exponential backoff.
-    - Applies jitter to reduce synchronized retries.
+    - Jitter is applied by handle_status_code for 5xx or 429 without a usable Retry-After.
+      When Retry-After is honored, no jitter is added.
     - Does not raise; caller is responsible for re-raising the last exception.
     """
 
@@ -206,53 +214,112 @@ def check_response(
         headers: dict = getattr(response, "headers", {})
         sleep_time = handle_status_code(status_code, headers, attempt, backoff_factor)
     if attempt < max_retries - 1:
-        sleep(sleep_time * random.uniform(0.9, 1.1))
+        time.sleep(sleep_time)
 
 
 def handle_status_code(
     status_code: Any | None, headers: dict, attempt: int, backoff_factor: float
 ) -> float:
     """
-    Compute backoff sleep duration based on HTTP status.
+    Compute the retry sleep duration (seconds) from an HTTP status, applying jitter
+    for exponential backoff paths and honoring `Retry-After` exactly for 429.
 
     Parameters
     ----------
-    status_code : int
-        The HTTP status code from the response.
+    status_code : int | None
+        HTTP status code from the response (or None).
     headers : dict
-        Response headers, used to check `Retry-After` on 429.
+        Response headers; consulted for `Retry-After` when status is 429.
     attempt : int
-        Current attempt number (zero-based).
+        Zero-based attempt index used for exponential backoff.
     backoff_factor : float
         Base multiplier for exponential backoff.
 
     Returns
     -------
     float
-        Number of seconds to sleep before retry.
+        Number of seconds to sleep before the next retry:
+        - For retryable 5xx (500, 502, 503, 504): `backoff_factor * (2 ** attempt)` with
+          jitter applied in-range ~±10% (via `random.uniform(0.9, 1.1)`).
+        - For 429: if `Retry-After` is present and parseable (delta-seconds or HTTP-date),
+          return that exact delay (no jitter); otherwise fall back to the jittered
+          exponential backoff above.
 
     Raises
     ------
     requests.HTTPError
-        If the status code is not retryable (e.g., 400–404, unexpected values).
+        If the status code is non-retryable (e.g., 400–404) or otherwise invalid.
 
     Notes
     -----
-    - Retryable: 500, 502, 503, 504.
-    - Too Many Requests (429): honors `Retry-After` if numeric, else backoff.
+    - Jitter is applied **only** on exponential backoff paths (5xx or 429 without a
+      usable `Retry-After`). When `Retry-After` is honored, its value is returned as-is.
     """
 
-    default_sleep = backoff_factor * (2**attempt)
+    default_sleep: float = backoff_factor * (2**attempt) * random.uniform(0.9, 1.1)
 
     if status_code in RETRYABLE_STATUS_CODES:
         return default_sleep
 
     elif status_code == TOO_MANY_REQUESTS_STATUS_CODE:
         retry_after = headers.get("Retry-After")
-        if retry_after and retry_after.isdigit():
-            return int(retry_after)
+        if isinstance(retry_after, str):
+            return extract_retry_after(retry_after, default_sleep)
         else:
             return default_sleep
 
     else:
         raise requests.HTTPError(f"Non-retryable status code: {status_code}")
+
+
+def extract_retry_after(retry_after: str, default_sleep: float) -> float:
+    """
+    Parse an HTTP `Retry-After` value and return a sleep duration (seconds).
+
+    Parameters
+    ----------
+    retry_after : str
+        Raw `Retry-After` header value. Per RFC 7231, this may be delta-seconds
+        (e.g., "120") or an HTTP-date (e.g., "Wed, 21 Oct 2015 07:28:00 GMT").
+    default_sleep : float
+        Fallback number of seconds to return if parsing fails or yields an unusable value.
+
+    Returns
+    -------
+    float
+        Sleep seconds computed as follows:
+        1) If `retry_after` parses as a finite float:
+        - If > 0.0, return that value (no jitter).
+        - If <= 0.0, return `default_sleep`.
+        2) Else, if it parses as an HTTP-date:
+        - Compute `(parsed_datetime - now_utc)` in seconds.
+        - If > 0.0, return that value; otherwise return `default_sleep`.
+        3) Otherwise, return `default_sleep`.
+
+    Notes
+    -----
+    - Non-finite numerics (`NaN`, `inf`, `-inf`) are treated as
+      invalid and fall back to `default_sleep`.
+    - This function never raises; it always returns a float suitable for `time.sleep`.
+    """
+
+    try:
+        retry_after = retry_after.strip()
+        float_retry_after: float = float(retry_after)
+        if not math.isfinite(float_retry_after) or float_retry_after <= 0.0:
+            return default_sleep
+        return float_retry_after
+    except RETRY_AFTER_ERRORS:
+        try:
+            possible_date: dt.datetime = eu.parsedate_to_datetime(retry_after)
+            if possible_date is None:
+                return default_sleep
+            if possible_date.tzinfo is None:
+                possible_date = possible_date.replace(tzinfo=dt.timezone.utc)
+            now: dt.datetime = dt.datetime.now(dt.timezone.utc)
+            secs: float = (possible_date - now).total_seconds()
+            if secs <= 0.0:
+                return default_sleep
+            return secs
+        except RETRY_AFTER_ERRORS:
+            return default_sleep

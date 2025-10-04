@@ -1,11 +1,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Not a distributable package — just central config for tools used in CI
 # ─────────────────────────────────────────────────────────────────────────────
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "over-intra-news"
 version = "0.0.0"
 requires-python = ">=3.13"
-
 dependencies = [
   "pandas",
   "psycopg2-binary",
@@ -24,6 +28,8 @@ dev = [
   "types-psycopg2",
   "types-requests",
   "boto3-stubs",
+  "pytest",
+  "pytest-mock",
 ]
 
 [tool.mypy]
@@ -31,7 +37,6 @@ python_version = "3.13"
 warn_unused_ignores = true
 disallow_untyped_defs = true
 pretty = true
-# Limit mypy to actual Python code so it doesn't roam:
 files = ["infra", "aws/ccnews_sampler"]
 
 [[tool.mypy.overrides]]
@@ -58,9 +63,5 @@ minversion = "7.0"
 addopts = "-q"
 testpaths = ["tests"]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Optional safety guard: prevent setuptools from accidentally discovering pkgs
-# If someone runs `pip install .` by mistake, this stops package discovery.
-# ─────────────────────────────────────────────────────────────────────────────
-[tool.setuptools]
-packages = []
+[tool.setuptools.packages.find]
+include = ["infra*", "aws/ccnews_sampler*"]
