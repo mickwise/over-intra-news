@@ -290,6 +290,7 @@ class InfraLogger:
 
             except (TypeError, ValueError):
                 return json.dumps(entry, ensure_ascii=False, default=str)
+
         else:
             context_str = " ".join(f"{k}={v}" for k, v in entry["context"].items())
             return (
@@ -410,7 +411,7 @@ def extract_env_vars(fall_backs: dict[str, bool]) -> tuple[str, str, str]:
         fall_backs["log_format"] = True
         log_format = "json"
 
-    if log_dest.lower() != "stderr":
+    if log_dest != "stderr":
         try:
             with open(log_dest, "a", encoding="utf-8"):
                 pass
