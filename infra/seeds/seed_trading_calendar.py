@@ -82,9 +82,9 @@ def ingest_nyse() -> None:
     load_dotenv()
     start_date: str = os.environ["START_DATE"]
     end_date: str = os.environ["END_DATE"]
-    nyse_cal: pd.DataFrame = (
-        xcals.get_calendar("XNYS", start_date, end_date).schedule[["open", "close"]]
-    )
+    nyse_cal: pd.DataFrame = xcals.get_calendar("XNYS", start_date, end_date).schedule[
+        ["open", "close"]
+    ]
     with connect_to_db() as conn:
         fill_trading_calendar(conn, nyse_cal)
     conn.close()
