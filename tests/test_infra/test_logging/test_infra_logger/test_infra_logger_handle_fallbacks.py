@@ -47,8 +47,8 @@ TEST_TUPLES: List[tuple[bool, str | None, bool, str | None, bool, str | None]] =
 
 
 @pytest.mark.parametrize(
-    "fallback_level, expected_emit_level, fallback_format,"
-    "expected_emit_format, fallback_dest, expected_emit_dest",
+    "fallback_level, expected_level_event, fallback_format,"
+    "expected_format_event, fallback_dest, expected_dest_event",
     TEST_TUPLES,
 )
 def test_handle_fallbacks(
