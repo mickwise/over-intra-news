@@ -74,22 +74,20 @@ def ingest_nyse() -> None:
     --------------------------
     START_DATE : str (YYYY-MM-DD)
     END_DATE   : str (YYYY-MM-DD)
+
+    Notes
+    -----
+    - Since NYSE has no lunch breaks, only open/close times are stored.
     """
     load_dotenv()
-    conn: connection = connect_to_db()
     start_date: str = os.environ["START_DATE"]
     end_date: str = os.environ["END_DATE"]
-    nyse_cal: pd.DataFrame = xcals.get_calendar("XNYS", start_date, end_date).schedule
-    try:
+    nyse_cal: pd.DataFrame = (
+        xcals.get_calendar("XNYS", start_date, end_date).schedule[["open", "close"]]
+    )
+    with connect_to_db() as conn:
         fill_trading_calendar(conn, nyse_cal)
-        conn.commit()
-
-    except Exception as e:
-        conn.rollback()
-        raise e
-
-    finally:
-        conn.close()
+    conn.close()
 
 
 def fill_trading_calendar(
@@ -122,7 +120,7 @@ def fill_trading_calendar(
     - Rows are streamed by `calendar_row_generator` for gap filling.
     """
     input_query: str = generate_db_query()
-    row_generator = calendar_row_generator(nyse_cal)
+    row_generator: Iterator[TradingCalendarRow] = calendar_row_generator(nyse_cal)
     load_into_table(conn, row_generator, input_query)
 
 
@@ -236,6 +234,7 @@ def extract_row(row: pd.Series) -> TradingCalendarRow:
     - `is_half_day` is True iff session duration < 6.5 hours.
     - Weekend is computed on the civil date (Mon=0,...,Sun=6).
     """
+
     if not isinstance(row.name, pd.Timestamp):
         raise TypeError("Row index must be a pd.Timestamp")
     trading_day: datetime.date = row.name.date()
@@ -260,7 +259,7 @@ def extract_row(row: pd.Series) -> TradingCalendarRow:
     )
 
 
-def extract_non_trading_row(date: datetime.date) -> tuple:
+def extract_non_trading_row(date: datetime.date) -> TradingCalendarRow:
     """
     Build a `trading_calendar` row for a non-trading civil date.
 
