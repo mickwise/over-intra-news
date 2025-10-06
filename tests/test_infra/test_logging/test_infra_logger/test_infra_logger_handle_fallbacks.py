@@ -25,11 +25,14 @@ Downstream usage
 
 from typing import List
 from unittest.mock import MagicMock
+
 import pytest
 from pytest_mock import MockerFixture
-from infra.logging.infra_logger import InfraLogger, handle_fallbacks
-from tests.test_infra.test_logging.test_infra_logger.infra_logger_testing_utils import init_logger_for_test
 
+from infra.logging.infra_logger import InfraLogger, handle_fallbacks
+from tests.test_infra.test_logging.test_infra_logger.infra_logger_testing_utils import (
+    init_logger_for_test,
+)
 
 TEST_TUPLES: List[tuple[bool, str | None, bool, str | None, bool, str | None]] = [
     (False, None, False, None, False, None),
@@ -42,20 +45,21 @@ TEST_TUPLES: List[tuple[bool, str | None, bool, str | None, bool, str | None]] =
     (True, "FALLBACK_LOG_LEVEL", True, "FALLBACK_LOG_FORMAT", True, "FALLBACK_LOG_DEST"),
 ]
 
+
 @pytest.mark.parametrize(
-    "fallback_level, expected_emit_level, fallback_format," \
+    "fallback_level, expected_emit_level, fallback_format,"
     "expected_emit_format, fallback_dest, expected_emit_dest",
     TEST_TUPLES,
 )
 def test_handle_fallbacks(
-        mocker: MockerFixture,
-        fallback_level: bool,
-        expected_level_event: str | None,
-        fallback_format: bool,
-        expected_format_event: str | None,
-        fallback_dest: bool,
-        expected_dest_event: str | None,
-    ):
+    mocker: MockerFixture,
+    fallback_level: bool,
+    expected_level_event: str | None,
+    fallback_format: bool,
+    expected_format_event: str | None,
+    fallback_dest: bool,
+    expected_dest_event: str | None,
+) -> None:
     """
     Ensure `handle_fallbacks` emits the correct events in order for a given flag set.
 
@@ -93,11 +97,7 @@ def test_handle_fallbacks(
 
     logger: InfraLogger = init_logger_for_test()
     mock_emit: MagicMock = mocker.patch.object(logger, "emit", autospec=True)
-    fallbacks = {
-        "level": fallback_level,
-        "log_format": fallback_format,
-        "log_dest": fallback_dest
-    }
+    fallbacks = {"level": fallback_level, "log_format": fallback_format, "log_dest": fallback_dest}
     handle_fallbacks(logger, fallbacks)
     expected_events = build_expected_events_list(
         fallback_level,
@@ -113,13 +113,13 @@ def test_handle_fallbacks(
 
 
 def build_expected_events_list(
-        fallback_level: bool,
-        expected_level_event: str | None,
-        fallback_format: bool,
-        expected_format_event: str | None,
-        fallback_dest: bool,
-        expected_dest_event: str | None,
-    ) -> List[str]:
+    fallback_level: bool,
+    expected_level_event: str | None,
+    fallback_format: bool,
+    expected_format_event: str | None,
+    fallback_dest: bool,
+    expected_dest_event: str | None,
+) -> List[str]:
     """
     Construct the ordered list of expected event names for the given flags.
 
