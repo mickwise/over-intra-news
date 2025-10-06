@@ -124,6 +124,43 @@ def mock_datetime_now(mocker: MockerFixture) -> MagicMock:
 
 
 def create_test_entry() -> LogEntry:
+    """
+    Purpose
+    -------
+    Build a canonical `LogEntry` payload for tests. Provides a stable, realistic
+    entry that exercises all fields and matches the constants used elsewhere
+    (e.g., `TEST_FORMATTED_TEXT`).
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    LogEntry
+        A fresh dictionary with:
+        - timestamp : str  — UTC ISO-8601 with trailing "Z" (derived from TEST_NOW)
+        - level     : "DEBUG"
+        - run_id    : TEST_RUN_ID
+        - component : TEST_COMPONENT_NAME
+        - event     : TEST_EVENT
+        - message   : TEST_MESSAGE
+        - run_meta  : TEST_RUN_META
+        - context   : TEST_CONTEXT
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    - Each call returns a new dict (safe to mutate in individual tests).
+    - The timestamp is preformatted as a string to mirror production entries and to
+      match the text-format path exactly.
+    - Keep the TEST_* constants in sync with any expected-output fixtures to avoid
+      brittle assertions.
+    """
+
     return {
         "timestamp": TEST_NOW.isoformat().replace("+00:00", "Z"),
         "level": "DEBUG",
