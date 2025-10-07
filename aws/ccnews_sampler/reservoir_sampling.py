@@ -177,6 +177,7 @@ class ReservoirManager:
         - Uniform reservoir semantics apply: fills up to capacity, then admits with
         probability `cap / seen_count` by replacing a random existing item.
         """
+
         self.reservoir_dict[date][session].consider(candidate)
 
     def extract_sample_dict(self) -> dict[str, OverIntraSamples]:
@@ -204,6 +205,7 @@ class ReservoirManager:
         - Capacities are enforced per reservoir; lists may be shorter than caps
         if fewer candidates were seen.
         """
+
         return {
             date: {
                 "intraday": reservoir_info["intraday"].samples,

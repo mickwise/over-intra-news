@@ -24,11 +24,13 @@ Instantiate once at process start and pass to helpers such as
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
-from aws.ccnews_sampler.run_logger import RunLogger
+if TYPE_CHECKING:
+    from aws.ccnews_sampler.run_logger import RunLogger
 
 
 @dataclass
@@ -77,5 +79,5 @@ class RunData:
     month: str
     daily_cap: int
     nyse_cal: pd.DataFrame
-    logger: RunLogger
+    logger: "RunLogger"
     rng: np.random.Generator

@@ -25,7 +25,7 @@ Downstream usage
 """
 
 import re
-from typing import List, cast
+from typing import TYPE_CHECKING, List, cast
 
 import boto3
 import pandas as pd
@@ -33,14 +33,16 @@ import pandas as pd
 from aws.ccnews_sampler.data_maps import DataMaps, build_data_maps, to_seconds_int
 from aws.ccnews_sampler.quota import compute_daily_caps
 from aws.ccnews_sampler.reservoir_sampling import OverIntraSamples, ReservoirManager
-from aws.ccnews_sampler.run_data import RunData
-from aws.ccnews_sampler.run_logger import RunLogger
+
+if TYPE_CHECKING:
+    from aws.ccnews_sampler.run_data import RunData
+    from aws.ccnews_sampler.run_logger import RunLogger
 
 DATE_TZ = "America/New_York"
 DATE_FMT = "%Y-%m-%d"
 
 
-def extract_sample(run_data: RunData) -> dict[str, OverIntraSamples]:
+def extract_sample(run_data: "RunData") -> dict[str, OverIntraSamples]:
     """
     Stream the monthly CC-NEWS queue from S3 and produce per-day/session samples.
 
@@ -69,7 +71,7 @@ def extract_sample(run_data: RunData) -> dict[str, OverIntraSamples]:
     """
     year: str = run_data.year
     month: str = run_data.month
-    logger: RunLogger = run_data.logger
+    logger: "RunLogger" = run_data.logger
     nyse_cal: pd.DataFrame = run_data.nyse_cal
 
     dt_index: pd.DatetimeIndex = cast(pd.DatetimeIndex, nyse_cal.index)
@@ -122,7 +124,7 @@ def generate_run_context(days: List[str], year: str, month: str) -> dict:
 
 
 def fill_reservoirs(
-    run_context: dict, run_data: RunData, data_maps: DataMaps, reservoir_manager: ReservoirManager
+    run_context: dict, run_data: "RunData", data_maps: DataMaps, reservoir_manager: ReservoirManager
 ) -> None:
     """
     Read the monthly queue stream and update per-day/session reservoirs.
@@ -149,6 +151,7 @@ def fill_reservoirs(
       as unmatched with up to 5 examples for diagnostics.
     - Admission into reservoirs is always attempted; memory stays bounded per cap.
     """
+
     s3_client = boto3.client("s3")
     queue_stream = s3_client.get_object(Bucket=run_data.bucket, Key=run_data.key)["Body"]
     date_pattern: re.Pattern[str] = re.compile(
@@ -194,6 +197,7 @@ def extract_link_date(line: str, date_pattern: re.Pattern[str]) -> tuple[pd.Time
     -----
     - Converts the UTC timestamp to America/New_York to produce the date key.
     """
+
     regex_result: re.Match[str] | None = re.search(date_pattern, line)
     if regex_result:
         date_groups: tuple[str] = cast(tuple[str], regex_result.groups())
@@ -227,6 +231,7 @@ def handle_erroneous_line(
     -----
     - Adds up to 5 examples to `unknown_or_offmonth_examples` for debugging.
     """
+
     run_context["lines_unmatched"] += 1
     if len(run_context["unknown_or_offmonth_examples"]) < 5:
         run_context["unknown_or_offmonth_examples"].append(line.strip())
@@ -270,6 +275,7 @@ def handle_correct_line(
     - Per-day kept counters are bounded by the caps for observability only; the
       reservoir itself enforces the true capacity.
     """
+
     intraday_cap, overnight_cap = data_maps.cap_dict[date_key]
     current_session_open, current_session_close = data_maps.session_dict[date_key]
     current_date_seconds = to_seconds_int(utc_date)

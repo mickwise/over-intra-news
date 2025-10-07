@@ -171,8 +171,9 @@ def build_session_dict(str_dates: pd.Series, nyse_cal: pd.DataFrame) -> dict[str
     - Missing timestamps (NaT) are mapped to None.
     - Epoch seconds are computed in UTC to avoid DST ambiguity.
     """
+
     non_trading_days_mask: pd.Series = ~nyse_cal["is_trading_day"]
-    non_trading_days_set = set(str_dates[non_trading_days_mask])
+    non_trading_days_set = set(str_dates[non_trading_days_mask.to_numpy()])
     session_open_seconds: pd.Series = to_seconds(nyse_cal["session_open_utc"])
     session_close_seconds: pd.Series = to_seconds(nyse_cal["session_close_utc"])
     session_times: Iterable[tuple[str, tuple[np.int64, np.int64]]] = zip(
@@ -210,7 +211,7 @@ def to_seconds(ts: pd.Series) -> pd.Series:
     - This helper does not alter the input and avoids Python-level loops.
     - NaT values propagate as <NA> in the returned Int64 Series.
     """
-    return ts.dt.tz_convert("UTC").view("int64") // 1_000_000_000
+    return ts.dt.tz_convert("UTC").astype("int64") // 1_000_000_000
 
 
 def to_seconds_int(ts: pd.Timestamp) -> int:
@@ -239,4 +240,4 @@ def to_seconds_int(ts: pd.Timestamp) -> int:
     - Uses the `.tz_convert("UTC")` accessor and integer nanoseconds (`.value`)
       divided by 1e9 to yield whole seconds.
     """
-    return int(ts.tz_convert("UTC")) // 1_000_000_000
+    return ts.tz_convert("UTC").value // 1_000_000_000

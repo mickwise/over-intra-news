@@ -36,4 +36,4 @@ jobs:
         run: mypy
 
       - name: Pytest (unit tests)
-        run: python -m pytest -q tests/test_infra
+        run: python -m pytest -q tests

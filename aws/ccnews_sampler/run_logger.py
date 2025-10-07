@@ -26,11 +26,16 @@ checkpoints. Later filter by `event` or `level`, or group by `run_id`
 to analyze an entire execution.
 """
 
+# For postponing evaluation of type annotations
+from __future__ import annotations
+
 import datetime as dt
 import json
+from typing import TYPE_CHECKING
 
-from aws.ccnews_sampler.monthly_uniform_sampling import FinalLogData
-from aws.ccnews_sampler.run_data import RunData
+if TYPE_CHECKING:
+    from aws.ccnews_sampler.monthly_uniform_sampling import FinalLogData
+    from aws.ccnews_sampler.run_data import RunData
 
 
 class RunLogger:
@@ -96,7 +101,7 @@ class RunLogger:
         self,
         event: str,
         level: str,
-        context: dict | FinalLogData | None = None,
+        context: dict | "FinalLogData" | None = None,
     ) -> None:
         """
         Write one structured log event as a single JSON line to STDOUT.
@@ -142,7 +147,7 @@ class RunLogger:
 
     def initial_emission(
         self,
-        run_data: RunData,
+        run_data: "RunData",
     ) -> None:
         """
         Emit a start-of-month manifest event for observability.
@@ -213,7 +218,7 @@ class RunLogger:
 
     def samples_emitted(
         self,
-        final_log_dict: FinalLogData,
+        final_log_dict: "FinalLogData",
     ) -> None:
         """
         Emit a terminal summary event after all per-day/session sample files are written.

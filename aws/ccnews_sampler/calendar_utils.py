@@ -29,7 +29,6 @@ Downstream usage
 import datetime as dt
 
 import pandas as pd
-from psycopg2.extensions import connection
 
 from infra.utils.db_utils import connect_to_db
 
@@ -119,16 +118,15 @@ def extract_nyse_cal(year: str, month: str) -> pd.DataFrame:
       may still be needed to satisfy type inference.
 
     """
-    conn: connection = connect_to_db()
-    try:
+
+    with connect_to_db() as conn:
         query: str = build_calendar_query()
         time_bounds = month_bounds(int(year), int(month))
         calendar: pd.DataFrame = pd.read_sql(
             query, conn, index_col="trading_day", params=time_bounds, parse_dates=["trading_day"]
         )
         calendar.index = pd.DatetimeIndex(calendar.index, name="trading_day")
-    finally:
-        conn.close()
+    conn.close()
     calendar.sort_index(inplace=True)
     calendar["session_open_utc"] = pd.to_datetime(calendar["session_open_utc"], utc=True)
     calendar["session_close_utc"] = pd.to_datetime(calendar["session_close_utc"], utc=True)

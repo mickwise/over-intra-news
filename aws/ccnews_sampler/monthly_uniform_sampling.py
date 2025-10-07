@@ -353,8 +353,7 @@ def fill_session_dir(
         Bucket=bucket,
         Key=output_path,
         Body="\n".join(samples).encode("utf-8"),
-        ContentType="text/plain",
-        charset="utf-8",
+        ContentType="text/plain; charset=utf-8",
     )
 
 
