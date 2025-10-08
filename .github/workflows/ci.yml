@@ -37,3 +37,35 @@ jobs:
 
       - name: Pytest (unit tests)
         run: python -m pytest -q tests
+
+      - name: shfmt (shell script format check)
+        run: |
+          sudo apt-get install -y shfmt
+          shfmt -l -w $(git ls-files '*.sh' '*.bats')
+      
+      - name: ShellCheck (lint bash)
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./aws/scripts
+          check_together: 'yes'
+          severity: error
+        env:
+          SHELLCHECK_OPTS: -e SC1091
+        
+      - name: Setup Bats and libs
+        id: setup-bats
+        uses: bats-core/bats-action@3.0.1
+
+      - name: Bats (bash tests)
+        shell: bash
+        env:
+          BATS_LIB_PATH: ${{ steps.setup-bats.outputs.lib-path }}
+          BATS_SHELL: /usr/bin/bash
+        run: |
+          shopt -s nullglob globstar
+          files=(tests/bash/*.bats tests/bash/**/*.bats)
+          if (( ${#files[@]} == 0 )); then
+            echo "No Bats tests found; skipping."
+          else
+            bats -r tests/bash
+          fi
