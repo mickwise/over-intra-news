@@ -1,5 +1,4 @@
-## Module: `validation.sh`
-
+# shellcheck shell=bash
 # =============================================================================
 # validation.sh — CLI & value validators for queue tooling
 #
@@ -25,7 +24,6 @@
 #   validate_s3_output_prefix "$OUTPUT_PATH"
 # =============================================================================
 
-
 # ------------------ source external functions ------------------
 # Source s3 utility functions
 source "$(dirname "$0")/s3_utils.sh"
@@ -48,9 +46,9 @@ source "$(dirname "$0")/s3_utils.sh"
 #
 # Notes
 #   Keep library functions side-effect free; use `die` only in validators.
-die () {
-  echo "$1" >&2
-  exit 1
+die() {
+	echo "$1" >&2
+	exit 1
 }
 
 # ----------------- Low-level validators -----------------
@@ -73,10 +71,9 @@ die () {
 # Notes
 #   Prevents accidental object/prefix mix-ups.
 assert_prefix_shape() {
-  parse_s3_uri "$1"
-  [[ "${PARSED_KEY}" == */ ]] || die "output must be a prefix ending with '/': s3://${PARSED_BUCKET}/${PARSED_KEY}"
+	parse_s3_uri "$1"
+	[[ ${PARSED_KEY} == */ ]] || die "output must be a prefix ending with '/': s3://${PARSED_BUCKET}/${PARSED_KEY}"
 }
-
 
 # ----------------- High-level validators you call -----------------
 
@@ -112,12 +109,11 @@ assert_prefix_shape() {
 #   - Silence of AWS CLI output is intentional; we rely on exit codes and emit
 #     curated error messages for readability.
 validate_s3_output_prefix() {
-  local uri="$1"
-  assert_prefix_shape "$uri"                 # sets PARSED_BUCKET, PARSED_KEY
-  check_bucket_access "$PARSED_BUCKET"
-  check_can_write_prefix "$PARSED_BUCKET" "$PARSED_KEY"   # write-only canary (no delete)
+	local uri="$1"
+	assert_prefix_shape "$uri" # sets PARSED_BUCKET, PARSED_KEY
+	check_bucket_access "$PARSED_BUCKET"
+	check_can_write_prefix "$PARSED_BUCKET" "$PARSED_KEY" # write-only canary (no delete)
 }
-
 
 # validate_arg FLAG VALUE
 # -----------------------
@@ -140,10 +136,10 @@ validate_s3_output_prefix() {
 #   This helper validates presence/shape only. Type checks (e.g., integer, date)
 #   should be done by the flag-specific validators that follow.
 validate_arg() {
-  local flag="$1" val="$2"
-  if [[ -z "$val" || "$val" == -* ]]; then
-    die "Missing value for $flag"
-  fi
+	local flag="$1" val="$2"
+	if [[ -z $val || $val == -* ]]; then
+		die "Missing value for $flag"
+	fi
 }
 
 # validate_year YEAR
@@ -161,14 +157,13 @@ validate_arg() {
 #   - If YEAR is empty                    → "Year is required."
 #   - If YEAR does not match ^[0-9]{4}$   → "Year must be a four-digit number."
 validate_year() {
-  local year="$1"
-  if [[ -z "$year" ]]; then
-    die "Year is required."
-  elif [[ ! "$year" =~ ^[0-9]{4}$ ]]; then
-    die "Year must be a four-digit number."
-  fi
+	local year="$1"
+	if [[ -z $year ]]; then
+		die "Year is required."
+	elif [[ ! $year =~ ^[0-9]{4}$ ]]; then
+		die "Year must be a four-digit number."
+	fi
 }
-
 
 # validate_positive_integer
 # -----------------------------
@@ -190,8 +185,8 @@ validate_year() {
 # Notes
 #   Validate before using the argument in selection or throttling logic.
 validate_positive_integer() {
-  local cap="$1"
-  ([[ "$cap" =~ ^[0-9]+$ ]] && [[ $cap -gt 0 ]]) || {
-    die "Daily cap must be a positive integer."
-  }
+	local cap="$1"
+	([[ $cap =~ ^[0-9]+$ ]] && [[ $cap -gt 0 ]]) || {
+		die "Daily cap must be a positive integer."
+	}
 }

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # =============================================================================
 # s3_utils.sh — Small S3 helpers for queue tooling
 #
@@ -48,19 +49,17 @@
 #
 # IAM required (minimum)
 #   s3:GetObject on the object key (and commonly s3:ListBucket).
-check_object_access()
-{
-    local bucket="$1"
-    local key="$2"
+check_object_access() {
+	local bucket="$1"
+	local key="$2"
 
-    aws s3api head-object \
-    --bucket "$bucket" \
-    --key "$key" >/dev/null 2>&1 || {
-        echo "Output file "$key" does not exist or is not accessible."
-        return 1
-    }
+	aws s3api head-object \
+		--bucket "$bucket" \
+		--key "$key" >/dev/null 2>&1 || {
+		echo "Output file $key does not exist or is not accessible."
+		return 1
+	}
 }
-
 
 # check_bucket_access
 # -----------------------------
@@ -80,13 +79,12 @@ check_object_access()
 # IAM required (minimum)
 #   s3:HeadBucket on the bucket.
 check_bucket_access() {
-  local bucket="$1"
-  aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 || {
-        echo "Bucket "$bucket" does not exist or is not accessible."
-        return 1
-    }
+	local bucket="$1"
+	aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 || {
+		echo "Bucket $bucket does not exist or is not accessible."
+		return 1
+	}
 }
-
 
 # check_can_write_prefix
 # -----------------------------
@@ -109,15 +107,15 @@ check_bucket_access() {
 # Notes
 #   Rely on lifecycle rules to expire canaries if DeleteObject isn’t allowed.
 check_can_write_prefix() {
-  local bucket="$1" prefix="$2"
-  local canary_key="${prefix}.__canary__.$(date +%s).$$"
-  aws s3api put-object --bucket "$bucket" --key "$canary_key" --body /dev/null >/dev/null 2>&1 || {
-        echo "no PutObject permission at s3://$bucket/$prefix"
-        return 1
-    }
-  echo "Note: wrote canary at s3://$bucket/$canary_key (will rely on lifecycle to expire it)" >&2
+	local bucket="$1" prefix="$2"
+	local canary_key
+	canary_key="${prefix}.__canary__.$(date +%s).$$"
+	aws s3api put-object --bucket "$bucket" --key "$canary_key" --body /dev/null >/dev/null 2>&1 || {
+		echo "no PutObject permission at s3://$bucket/$prefix"
+		return 1
+	}
+	echo "Note: wrote canary at s3://$bucket/$canary_key (will rely on lifecycle to expire it)" >&2
 }
-
 
 # ------------------ Parsing ------------------
 
@@ -139,13 +137,15 @@ check_can_write_prefix() {
 # Notes
 #   Use this before head-bucket/head-object calls.
 parse_s3_uri() {
-  local uri="$1"
-  [[ -n "$uri" ]] || die "empty S3 URI"
-  if [[ "$uri" =~ ^s3://([^/]+)/(.+)$ ]]; then
-    PARSED_BUCKET="${BASH_REMATCH[1]}"
-    PARSED_KEY="${BASH_REMATCH[2]}"
-  else
-    echo "invalid S3 URI (expected s3://bucket/key): $uri"
-    return 1
-  fi
+	local uri="$1"
+	[[ -n $uri ]] || die "empty S3 URI"
+	if [[ $uri =~ ^s3://([^/]+)/(.+)$ ]]; then
+		# shellcheck disable=SC2034
+		PARSED_BUCKET="${BASH_REMATCH[1]}"
+		# shellcheck disable=SC2034
+		PARSED_KEY="${BASH_REMATCH[2]}"
+	else
+		echo "invalid S3 URI (expected s3://bucket/key): $uri"
+		return 1
+	fi
 }

@@ -39,10 +39,10 @@
 #
 # Notes
 #   - CC-NEWS begins Aug 2016; earlier months are skipped automatically.
-#   - Requires Bash >= 5 for `wait -n`. On older Bash (e.g., Amazon Linux 2),
-#     implement a PIDs-array wait fallback or use an AL2023 AMI.
+#   - Concurrency is implemented with a PIDs array and explicit waits (no `wait -n` requirement).
+#     A batch of background jobs is waited on whenever its size reaches --concurrency,
+#     and each job’s exit code is tallied so the final exit status equals the number of failures.
 # =============================================================================
-
 
 # ------------------ source external functions ------------------
 
@@ -56,7 +56,13 @@ source "$(dirname "$0")/validation.sh"
 set -euo pipefail
 
 # Kill all background jobs if the script exits (success, error, or Ctrl-C)
-trap 'jobs -p | xargs -r kill' EXIT
+# shellcheck disable=SC2154
+trap '
+  pids=$(jobs -p)
+  if [ -n "$pids" ]; then
+    kill $pids 2>/dev/null || true
+  fi
+' EXIT
 
 #-------------------------- Configuration --------------------------
 
@@ -70,6 +76,9 @@ STRICT=false
 # Generate a unique run ID for this execution
 RUN_ID="$(uuidgen)"
 export RUN_ID
+
+# Declare a processed months array
+PROCESSED_MONTHS=()
 
 #-------------------------- Functions --------------------------
 
@@ -102,42 +111,45 @@ export RUN_ID
 # Notes
 #   - Skips months before Aug 2016 (CC-NEWS start).
 #   - Does not validate content format beyond simple path prefixing.
-fetch_monthly_warcs()
-{
-    local year="$1"
-    local output_prefix="$2"
+fetch_monthly_warcs() {
+	local year="$1"
+	local output_prefix="$2"
 
-    for mm in $(seq 1 12); do
+	for mm in $(seq 1 12); do
+		# CC-News started in August 2016
+		if [[ $year == "2016" && $mm -le 7 ]]; then
+			continue
+		fi
 
-        # CC-News started in August 2016
-        if [[ $year == "2016" && $mm -le 7 ]]; then
-            continue
-        fi
+		# Pad month with leading zero if necessary
+		local month
+		month=$(printf "%02d" "$mm")
 
-        # Pad month with leading zero if necessary
-        local month=$(printf "%02d" "$mm")
+		local url="crawl-data/CC-NEWS/$year/$month/warc.paths.gz"
 
-        local url="crawl-data/CC-NEWS/$year/$month/warc.paths.gz"
-        
-        # Check if the WARC exists
-        parse_s3_uri "s3://commoncrawl/$url"
-        if check_object_access "$PARSED_BUCKET" "$PARSED_KEY" ; then
-            echo "Fetching WARC paths for "$year"-"$month"..."
-        else
-            if [[ "$STRICT" == true ]]; then
-                die "Data for "$year"-"$month" is not available. Exiting.";
-            else
-                echo "Data for "$year"-"$month" is not available. Skipping."
-                continue
-            fi
-        fi
+		# Check if the WARC exists
+		parse_s3_uri "s3://commoncrawl/$url"
+		if check_object_access "$PARSED_BUCKET" "$PARSED_KEY"; then
+			:
+		else
+			if [[ $STRICT == true ]]; then
+				die "Data for $year-$month is not available. Exiting."
+			else
+				echo "Data for $year-$month is not available. Skipping."
+				continue
+			fi
+		fi
 
-    # Fetch the WARC paths, prepend the S3 prefix, 
-    # and upload to the corresponding months directory.
-    aws s3 cp "s3://commoncrawl/$url" - | zcat | sed 's|^|s3://commoncrawl/|' | aws s3 cp - "${output_prefix%/}/$month/warc_queue.txt"
-    done
+		# Run the pipeline; on success, log and record the month.
+		if aws s3 cp "s3://commoncrawl/$url" - |
+			zcat |
+			sed 's|^|s3://commoncrawl/|' |
+			aws s3 cp - "${output_prefix%/}/$month/warc_queue.txt"; then
+			echo "Fetching WARC paths for $year-$month..."
+			PROCESSED_MONTHS+=("$month")
+		fi
+	done
 }
-
 
 # enforce_daily_cap
 # -----------------------------
@@ -160,7 +172,7 @@ fetch_monthly_warcs()
 #
 # Fails
 #   - If queue file is missing/inaccessible → exit 1 via die()
-#   - If Python exits non-zero → script terminates (set -e)
+#   - If Python exits non-zero → that job’s rc propagates from the worker (parent tallies via wait).
 #
 # IAM required (minimum)
 #   - s3:GetObject on the month queue path
@@ -168,95 +180,79 @@ fetch_monthly_warcs()
 # Notes
 #   - RUN_ID, SHARD_NAME, and RUN_META_JSON are exported by the parent script
 #     and available to the Python process via environment variables.
-enforce_daily_cap()
-{
-    local output_prefix="$1"
-    local year="$2"
-    local month="$3"
-    local daily_cap="$4"
-    local warc_queue="${output_prefix%/}/$month/warc_queue.txt"
+enforce_daily_cap() {
+	local output_prefix="$1"
+	local year="$2"
+	local month="$3"
+	local daily_cap="$4"
+	local warc_queue="${output_prefix%/}/$month/warc_queue.txt"
 
-    # Check if the output file exists
-    parse_s3_uri "$warc_queue"
-    check_object_access "$PARSED_BUCKET" "$PARSED_KEY" || {
-        die "Output file "$warc_queue" does not exist or is not accessible."
-    }
+	# Check if the output file exists
+	parse_s3_uri "$warc_queue"
+	check_object_access "$PARSED_BUCKET" "$PARSED_KEY" || {
+		die "Output file $warc_queue does not exist or is not accessible."
+	}
 
-    # Process the file to enforce daily cap
-    python3 -u monthly_uniform_sampling.py "$PARSED_BUCKET" "$PARSED_KEY" "$year" "$month" "$daily_cap"
+	# Process the file to enforce daily cap
+	python3 -u monthly_uniform_sampling.py "$PARSED_BUCKET" "$PARSED_KEY" "$year" "$month" "$daily_cap"
 }
 
 #-------------------------- Main Script ----------------------
-
-# Main script flow
-# -----------------------------
-# Purpose
-#   Parse CLI flags, validate inputs, establish run context, fetch month queues,
-#   then process months in parallel (bounded by --concurrency) to apply daily caps
-#   with intraday/overnight proportions per trading calendar.
-#
-# Contract
-#   - Exits non-zero if any month fails (aggregated failure tracking over background jobs).
-#
-# Effects
-#   - Exports:
-#       RUN_ID         unique UUID for the run (from uuidgen)
-#       SHARD_NAME     defaults to YEAR unless overridden
-#       RUN_META_JSON  {"year": <YYYY>, "daily_cap": <int>, "strict": <bool>, "output_prefix": "<S3prefix>"}
-#   - Invokes:
-#       fetch_monthly_warcs YEAR OUTPUT_PREFIX
-#       enforce_daily_cap for each valid month, with at most --concurrency months in flight.
-#
-# Parallelization details
-#   - Each month is launched as a background job.
-#   - Concurrency is capped via `wait -n` (Bash ≥ 5); when the cap is reached,
-#     the script waits for any one job to finish, tallies its exit code, then launches the next.
-#   - After launching all months, the script drains remaining jobs, tallying exit codes.
-#
-# Fails
-#   - Any validator failure (year, output prefix) → exit 1.
-#   - Any AWS CLI failure in a month job → that job’s non-zero exit is recorded; the parent
-#     exits non-zero if any month failed.
-
-# Accept configuration parameters as flags
-while [[ "$#" -gt 0 ]]; do
-    case "$1" in
-        --year) validate_arg "$1" "$2"
-        validate_year "$2"
-        YEAR="$2";
-        shift 1;;
-        --daily-cap) validate_arg  "$1" "$2"
-        validate_positive_integer "$2"
-        DAILY_CAP="$2";
-        shift 1;;
-        --shard-name) validate_arg  "$1" "$2"
-        SHARD_NAME="$2";
-        shift 1;;
-        --concurrency) validate_arg  "$1" "$2"
-        validate_positive_integer "$2"
-        CONCURRENCY="$2";
-        shift 1;;
-        --output-prefix) validate_arg "$1" "$2"
-        validate_s3_output_prefix "$2"
-        OUTPUT_PREFIX="$2";
-        shift 1;;
-        -h|--help) 
-            echo "Usage: "$0" --year YEAR [--daily-cap DAILY_CAP] [--concurrency CONCURRENCY] "
-            echo "[--shard-name SHARD_NAME] [--output-prefix OUTPUT_PREFIX] [--strict] "
-            exit 0;;
-        --strict) STRICT=true;;
-        *) echo "Unknown parameter: "$1""; exit 1;;
-    esac
-    shift 1;
+# Parse CLI flags
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--year)
+		validate_arg "$1" "$2"
+		validate_year "$2"
+		YEAR="$2"
+		shift
+		;;
+	--daily-cap)
+		validate_arg "$1" "$2"
+		validate_positive_integer "$2"
+		DAILY_CAP="$2"
+		shift
+		;;
+	--shard-name)
+		validate_arg "$1" "$2"
+		SHARD_NAME="$2"
+		shift
+		;;
+	--concurrency)
+		validate_arg "$1" "$2"
+		validate_positive_integer "$2"
+		CONCURRENCY="$2"
+		shift
+		;;
+	--output-prefix)
+		validate_arg "$1" "$2"
+		validate_s3_output_prefix "$2"
+		OUTPUT_PREFIX="$2"
+		shift
+		;;
+	-h | --help)
+		echo "Usage: $0 --year YEAR [--daily-cap DAILY_CAP] [--concurrency CONCURRENCY] "
+		echo "[--shard-name SHARD_NAME] [--output-prefix OUTPUT_PREFIX] [--strict] "
+		exit 0
+		;;
+	--strict)
+		STRICT=true
+		;;
+	*)
+		echo "Unknown parameter: $1"
+		exit 1
+		;;
+	esac
+	shift
 done
 
 # Set default shard name and output prefix if not provided
-if [[ -z "$SHARD_NAME" ]]; then
-    SHARD_NAME="$YEAR"
+if [[ -z $SHARD_NAME ]]; then
+	SHARD_NAME="$YEAR"
 fi
 
-if [[ -z "$OUTPUT_PREFIX" ]]; then
-    OUTPUT_PREFIX="s3://news-archive/"$YEAR"/"
+if [[ -z $OUTPUT_PREFIX ]]; then
+	OUTPUT_PREFIX="s3://news-archive/$YEAR/"
 fi
 
 # Export shard name for child processes
@@ -265,61 +261,64 @@ export SHARD_NAME
 # Get the monthly WARC paths and store them in the output path
 fetch_monthly_warcs "$YEAR" "$OUTPUT_PREFIX"
 
-RUNNING=0
+# ------------------ Concurrency Handling ------------------
+# We accumulate job PIDs in RUN_PIDS. When its length reaches CONCURRENCY,
+# we wait on the entire batch, tallying non-zero exit codes. After all
+# batches are processed, any remaining jobs are waited on. Non-zero rc
+# increments FAILED and emits a "Continuing." message unless strict mode.
+
 FAILED=0
+declare -a RUN_PIDS=()
 
-# Enforce the daily cap on each month's WARC paths
-for month in $(seq 1 12); do
+# Temporarily disable errexit during waits; re-enable after concurrency handling.
+set +e
 
-    # CC-News started in August 2016
-    if [[ $YEAR == "2016" && $month -le 7 ]]; then
-        continue
-    fi
+for month in "${PROCESSED_MONTHS[@]}"; do
+	(
+		# Prepare per-run metadata as JSON
+		json_bool="$([[ $STRICT == true ]] && printf 'true' || printf 'false')"
+    # shellcheck disable=SC2089
+		printf -v RUN_META_JSON \
+			'{"year":"%s","month":"%s","daily_cap":%s,"strict":%s,"output_prefix":"%s"}' \
+			"$YEAR" "$month" "$DAILY_CAP" "$json_bool" "$OUTPUT_PREFIX"
+		# shellcheck disable=SC2090
+		export RUN_META_JSON
 
-    # Pad month with leading zero if necessary
-    MONTH_PADDED=$(printf "%02d" "$month")
+		enforce_daily_cap "$OUTPUT_PREFIX" "$YEAR" "$month" "$DAILY_CAP"
+		exit $?
+	) &
+	RUN_PIDS+=("$!")
 
-    # Export metadata and invoke in background
-    (
-        RUN_META_JSON='{
-        "year": "'$YEAR'",
-        "month": "'$MONTH_PADDED'",
-        "daily_cap": '$DAILY_CAP',
-        "strict": '$STRICT',
-        "output_prefix": "'$OUTPUT_PREFIX'"
-        }'
-        export RUN_META_JSON
-        enforce_daily_cap "$OUTPUT_PREFIX" "$YEAR" "$MONTH_PADDED" "$DAILY_CAP" 
-    )&
-
-    # Manage concurrency
-    (( RUNNING++ ))
-    if [[ "$RUNNING" -eq $CONCURRENCY ]]; then
-        wait -n
-        rc=$?
-        (( RUNNING-- ))
-        if [[ $rc -ne 0 ]]; then
-            if [[ "$STRICT" == true ]]; then
-                die "enforce_daily_cap failed with exit code $rc. Exiting."
-            fi
-            echo "enforce_daily_cap failed with exit code $rc. Continuing."
-            (( FAILED++ ))
-        fi
-    fi
+	if [[ ${#RUN_PIDS[@]} -ge $CONCURRENCY ]]; then
+		for pid in "${RUN_PIDS[@]}"; do
+			wait "$pid"
+			rc=$?
+			if [[ $rc -ne 0 ]]; then
+				if [[ $STRICT == true ]]; then
+					die "enforce_daily_cap failed with exit code $rc. Exiting."
+				fi
+				echo "enforce_daily_cap failed with exit code $rc. Continuing."
+				((FAILED++))
+			fi
+		done
+		RUN_PIDS=()
+	fi
 done
 
-# Wait for all background processes to finish
-while [[ "$RUNNING" -gt 0 ]]; do
-    wait -n
-    rc=$?
-    if [[ $rc -ne 0 ]]; then
-        if [[ "$STRICT" == true ]]; then
-            die "enforce_daily_cap failed with exit code $rc. Exiting."
-        fi
-        echo "enforce_daily_cap failed with exit code $rc. Continuing."
-        (( FAILED++ ))
-    fi
-    (( RUNNING-- ))
+# Wait on any remaining jobs
+for pid in "${RUN_PIDS[@]}"; do
+	wait "$pid"
+	rc=$?
+	if [[ $rc -ne 0 ]]; then
+		if [[ $STRICT == true ]]; then
+			die "enforce_daily_cap failed with exit code $rc. Exiting."
+		fi
+		echo "enforce_daily_cap failed with exit code $rc. Continuing."
+		((FAILED++))
+	fi
 done
 
-exit $FAILED
+# Re-enable errexit
+set -e
+
+exit "$FAILED"
