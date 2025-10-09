@@ -2,12 +2,12 @@
 Purpose
 -------
 Validate `extract_env_vars` normalization and fallback behavior driven by environment
-variables. Ensures level/format/destination are coerced as specified and that the
+variables. Ensures format/destination are coerced as specified and that the
 `fall_backs` flags are set only when defaults are applied.
 
 Key behaviors
 -------------
-- Returns normalized triple: (LEVEL uppercased, format lowercased, dest unchanged).
+- Returns normalized pair: (format lowercased, dest unchanged).
 - Applies defaults when env vars are missing or invalid and flips corresponding flags.
 - Treats destination strictly: only the literal "stderr" is special; otherwise a file
   writability probe is attempted and may fall back to "stderr".
@@ -34,7 +34,6 @@ from infra.logging.infra_logger import extract_env_vars
 from tests.test_infra.test_logging.test_infra_logger.infra_logger_testing_utils import (
     TEST_DEST,
     TEST_FORMAT,
-    TEST_LOGGER_LEVEL,
 )
 
 
@@ -45,7 +44,7 @@ def test_infra_logger_extract_env_vars_happy(monkeypatch: MonkeyPatch) -> None:
     Parameters
     ----------
     monkeypatch : MonkeyPatch
-        Used to set all three environment variables to valid values.
+        Used to set both environment variables to valid values.
 
     Returns
     -------
@@ -60,18 +59,16 @@ def test_infra_logger_extract_env_vars_happy(monkeypatch: MonkeyPatch) -> None:
     Notes
     -----
     - Exercises the "everything valid" path: no probing, no coercion beyond
-      the documented normalization (upper/lower on level/format).
+      the documented normalization.
     """
 
     set_up_env_vars(monkeypatch)
     fallbacks = {
-        "level": False,
         "log_format": False,
         "log_dest": False,
     }
-    log_level, log_format, log_dest = extract_env_vars(fallbacks)
+    log_format, log_dest = extract_env_vars(fallbacks)
     general_assertions(
-        log_level=log_level,
         log_format=log_format,
         log_dest=log_dest,
         fallbacks=fallbacks,
@@ -85,7 +82,7 @@ def test_infra_logger_extract_env_vars_defaults(monkeypatch: MonkeyPatch) -> Non
     Parameters
     ----------
     monkeypatch : MonkeyPatch
-        Used to delete LOG_LEVEL, LOG_FORMAT, and LOG_DEST.
+        Used to delete LOG_FORMAT and LOG_DEST.
 
     Returns
     -------
@@ -94,7 +91,7 @@ def test_infra_logger_extract_env_vars_defaults(monkeypatch: MonkeyPatch) -> Non
     Raises
     ------
     AssertionError
-        If defaults ("INFO", "json", "stderr") are not returned or fallback
+        If defaults ("json", "stderr") are not returned or fallback
         flags are set.
 
     Notes
@@ -104,60 +101,16 @@ def test_infra_logger_extract_env_vars_defaults(monkeypatch: MonkeyPatch) -> Non
     """
 
     fallbacks = {
-        "level": False,
         "log_format": False,
         "log_dest": False,
     }
-    monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.delenv("LOG_FORMAT", raising=False)
     monkeypatch.delenv("LOG_DEST", raising=False)
-    log_level, log_format, log_dest = extract_env_vars(fallbacks)
+    log_format, log_dest = extract_env_vars(fallbacks)
     general_assertions(
-        log_level=log_level,
         log_format=log_format,
         log_dest=log_dest,
         fallbacks=fallbacks,
-        expected_level="INFO",
-    )
-
-
-def test_infra_logger_extract_env_vars_missing_level(monkeypatch: MonkeyPatch) -> None:
-    """
-    Invalid level coerces to "INFO" and flips the level fallback flag.
-
-    Parameters
-    ----------
-    monkeypatch : MonkeyPatch
-        Used to set LOG_LEVEL to an invalid value (empty string).
-
-    Returns
-    -------
-    None
-
-    Raises
-    ------
-    AssertionError
-        If level is not "INFO" or the level fallback flag is not True.
-
-    Notes
-    -----
-    - Format and destination remain as provided and should not flip their flags.
-    """
-
-    fallbacks = {
-        "level": False,
-        "log_format": False,
-        "log_dest": False,
-    }
-    set_up_env_vars(monkeypatch, level="")
-    log_level, log_format, log_dest = extract_env_vars(fallbacks)
-    general_assertions(
-        log_level=log_level,
-        log_format=log_format,
-        log_dest=log_dest,
-        fallbacks=fallbacks,
-        expected_level="INFO",
-        fallback_level=True,
     )
 
 
@@ -181,18 +134,16 @@ def test_infra_logger_extract_env_vars_missing_format(monkeypatch: MonkeyPatch) 
 
     Notes
     -----
-    - Level and destination remain as provided and should not flip their flags.
+    - Destination remain as provided and should not flip their flags.
     """
 
     fallbacks = {
-        "level": False,
         "log_format": False,
         "log_dest": False,
     }
     set_up_env_vars(monkeypatch, log_format="")
-    log_level, log_format, log_dest = extract_env_vars(fallbacks)
+    log_format, log_dest = extract_env_vars(fallbacks)
     general_assertions(
-        log_level=log_level,
         log_format=log_format,
         log_dest=log_dest,
         fallbacks=fallbacks,
@@ -230,15 +181,13 @@ def test_infra_logger_extract_env_vars_file_dest(
     """
 
     fallbacks = {
-        "level": False,
         "log_format": False,
         "log_dest": False,
     }
     test_file_path: pathlib.Path = tmp_path / "test_log.txt"
     set_up_env_vars(monkeypatch, log_dest=str(test_file_path))
-    log_level, log_format, log_dest = extract_env_vars(fallbacks)
+    log_format, log_dest = extract_env_vars(fallbacks)
     general_assertions(
-        log_level=log_level,
         log_format=log_format,
         log_dest=log_dest,
         fallbacks=fallbacks,
@@ -275,16 +224,14 @@ def test_infra_logger_extract_env_vars_file_dest_err(
     """
 
     fallbacks = {
-        "level": False,
         "log_format": False,
         "log_dest": False,
     }
     set_up_env_vars(monkeypatch, log_dest="")
     mock_open: MagicMock = mocker.patch("infra.logging.infra_logger.open")
     mock_open.side_effect = OSError("boom")
-    log_level, log_format, log_dest = extract_env_vars(fallbacks)
+    log_format, log_dest = extract_env_vars(fallbacks)
     general_assertions(
-        log_level=log_level,
         log_format=log_format,
         log_dest=log_dest,
         fallbacks=fallbacks,
@@ -295,38 +242,29 @@ def test_infra_logger_extract_env_vars_file_dest_err(
 
 
 def general_assertions(
-    log_level: str,
     log_format: str,
     log_dest: str,
     fallbacks: dict[str, bool],
-    expected_level: str = TEST_LOGGER_LEVEL,
     expected_format: str = TEST_FORMAT,
     expected_dest: str = TEST_DEST,
-    fallback_level: bool = False,
     fallback_format: bool = False,
     fallback_dest: bool = False,
 ) -> None:
     """
-    Shared assertion helper for validating returned triple and fallback flags.
+    Shared assertion helper for validating returned pair and fallback flags.
 
     Parameters
     ----------
-    log_level : str
-        Actual level returned by `extract_env_vars`.
     log_format : str
         Actual format returned by `extract_env_vars`.
     log_dest : str
         Actual destination returned by `extract_env_vars`.
     fallbacks : dict[str, bool]
         The mutable flag dict after the call.
-    expected_level : str, default=TEST_LOGGER_LEVEL
-        Expected normalized level.
     expected_format : str, default=TEST_FORMAT
         Expected normalized format.
     expected_dest : str, default=TEST_DEST
         Expected destination (either "stderr" or a file path).
-    fallback_level : bool, default=False
-        Expected state of the level fallback flag.
     fallback_format : bool, default=False
         Expected state of the format fallback flag.
     fallback_dest : bool, default=False
@@ -341,11 +279,9 @@ def general_assertions(
     - Centralizes repetitive assertions and keeps case bodies minimal.
     """
 
-    assert log_level == expected_level
     assert log_format == expected_format
     assert log_dest == expected_dest
     assert fallbacks == {
-        "level": fallback_level,
         "log_format": fallback_format,
         "log_dest": fallback_dest,
     }
@@ -353,12 +289,11 @@ def general_assertions(
 
 def set_up_env_vars(
     monkeypatch: MonkeyPatch,
-    level: str = TEST_LOGGER_LEVEL,
     log_format: str = TEST_FORMAT,
     log_dest: str = TEST_DEST,
 ) -> None:
     """
-    Reset and set the three logging env vars to the provided values.
+    Reset and set the two logging env vars to the provided values.
 
     Parameters
     ----------
@@ -380,9 +315,7 @@ def set_up_env_vars(
     - Ensures a clean env state per test and avoids cross-test contamination.
     """
 
-    monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.delenv("LOG_FORMAT", raising=False)
     monkeypatch.delenv("LOG_DEST", raising=False)
-    monkeypatch.setenv("LOG_LEVEL", level)
     monkeypatch.setenv("LOG_FORMAT", log_format)
     monkeypatch.setenv("LOG_DEST", log_dest)

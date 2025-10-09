@@ -50,6 +50,7 @@ LOWER_LEVEL_TUPLES: List[tuple[str, str]] = [
     ("ERROR", "INFO"),
     ("ERROR", "DEBUG"),
 ]
+
 TEST_MESSAGE_CONTEXT_TUPLES: List[tuple[str | None, str, Context | None, Context]] = [
     (None, "", None, {}),
     (TEST_MESSAGE, TEST_MESSAGE, None, {}),

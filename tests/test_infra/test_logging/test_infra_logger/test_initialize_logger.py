@@ -6,7 +6,7 @@ optional run_id generation, defaulting of `run_meta`, and handoff to `handle_fal
 
 Key behaviors
 -------------
-- Calls `extract_env_vars` once and uses its (level, format, dest) to build the logger.
+- Calls `extract_env_vars` once and uses its (format, dest) to build the logger.
 - Generates a run_id only when `run_id` is None; otherwise uses the provided value.
 - Defaults `run_meta` to `{}` when None.
 - Invokes `handle_fallbacks` exactly once on the constructed logger.
@@ -73,7 +73,7 @@ def test_infra_logger_initialize_logger_happy(mocker: MockerFixture) -> None:
     mock_extract_env_vars, mock_generate_run_id, mock_handle_fallbacks = mock_infra_logger_helpers(
         mocker
     )
-    initialize_logger(TEST_COMPONENT_NAME, TEST_RUN_ID, TEST_RUN_META)
+    initialize_logger(TEST_COMPONENT_NAME, TEST_LOGGER_LEVEL, TEST_RUN_ID, TEST_RUN_META)
     mock_extract_env_vars.assert_called_once()
     mock_generate_run_id.assert_not_called()
     mock_handle_fallbacks.assert_called_once()
@@ -125,7 +125,9 @@ def test_infra_logger_initialize_logger_missing_variables(
     mock_extract_env_vars, mock_generate_run_id, mock_handle_fallbacks = mock_infra_logger_helpers(
         mocker
     )
-    logger: InfraLogger = initialize_logger(TEST_COMPONENT_NAME, input_run_id, input_run_meta)
+    logger: InfraLogger = initialize_logger(
+        TEST_COMPONENT_NAME, TEST_LOGGER_LEVEL, input_run_id, input_run_meta
+    )
     mock_extract_env_vars.assert_called_once()
     if input_run_id is None:
         mock_generate_run_id.assert_called_once_with(TEST_COMPONENT_NAME)
@@ -163,7 +165,7 @@ def mock_infra_logger_helpers(mocker: MockerFixture) -> tuple[MagicMock, MagicMo
 
     mock_extract_env_vars: MagicMock = mocker.patch(
         "infra.logging.infra_logger.extract_env_vars",
-        return_value=(TEST_LOGGER_LEVEL, TEST_FORMAT, TEST_DEST),
+        return_value=(TEST_FORMAT, TEST_DEST),
     )
     mock_generate_run_id: MagicMock = mocker.patch(
         "infra.logging.infra_logger.generate_run_id",

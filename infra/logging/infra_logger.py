@@ -9,7 +9,7 @@ Key behaviors
 - Emits one structured log entry per call (`emit`).
 - Supports log level thresholding (DEBUG, INFO, WARNING, ERROR).
 - Serializes entries as JSON (default) or human-readable text.
-- Handles invalid environment variables by falling back to defaults.
+- Handles invalid LOG_FORMAT/LOG_DEST by falling back to defaults.
 - Ensures logging never interrupts program execution.
 
 Conventions
@@ -163,9 +163,13 @@ class InfraLogger:
         -----
         - Respects log level threshold: entries below threshold are dropped.
         - Timestamp is recorded in UTC ISO-8601 with a "Z" suffix.
+        - The level parameter is case-insensitive and normalized to UPPERCASE; 
+          unknown levels fall back to the logger’s current level threshold check.”
         """
-
-        if LEVEL_MAPPING[level] < LEVEL_MAPPING[self.level]:
+        up_level: str = level.upper()
+        if up_level not in LOG_LEVELS:
+            up_level = self.level
+        elif LEVEL_MAPPING[up_level] < LEVEL_MAPPING[self.level]:
             return
         if context is None:
             context = {}
@@ -173,7 +177,7 @@ class InfraLogger:
             msg = ""
         entry: LogEntry = {
             "timestamp": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-            "level": level,
+            "level": up_level,
             "run_id": self.run_id,
             "component": self.component_name,
             "event": event,
@@ -327,6 +331,7 @@ class InfraLogger:
 
 def initialize_logger(
     component_name: str,
+    level: str = "INFO",
     run_id: str | None = None,
     run_meta: dict | None = None,
 ) -> InfraLogger:
@@ -337,6 +342,8 @@ def initialize_logger(
     ----------
     component_name : str
         Name of the component using the logger.
+    level : str, default="INFO"
+        Minimum log level threshold ("DEBUG", "INFO", "WARNING", "ERROR").
     run_id : str, optional
         Unique identifier for the run; auto-generated if not provided.
     run_meta : dict, optional
@@ -349,16 +356,15 @@ def initialize_logger(
 
     Notes
     -----
-    - Environment variables LOG_LEVEL, LOG_FORMAT, LOG_DEST are honored.
+    - Environment variables LOG_FORMAT and LOG_DEST are honored.
     - Invalid values fall back to defaults with warnings emitted.
     """
 
     fall_backs = {
-        "level": False,
         "log_format": False,
         "log_dest": False,
     }
-    level, log_format, log_dest = extract_env_vars(fall_backs)
+    log_format, log_dest = extract_env_vars(fall_backs)
 
     if run_id is None:
         run_id = generate_run_id(component_name)
@@ -366,11 +372,15 @@ def initialize_logger(
     if run_meta is None:
         run_meta = {}
 
+    up_level = level.upper()
+    if up_level not in LOG_LEVELS:
+        up_level = "INFO"
+
     logger = InfraLogger(
         component_name=component_name,
         run_id=run_id,
         run_meta=run_meta,
-        log_level=level,
+        log_level=up_level,
         log_format=log_format,
         log_dest=log_dest,
     )
@@ -378,7 +388,7 @@ def initialize_logger(
     return logger
 
 
-def extract_env_vars(fall_backs: dict[str, bool]) -> tuple[str, str, str]:
+def extract_env_vars(fall_backs: dict[str, bool]) -> tuple[str, str]:
     """
     Extract and validate logging configuration from environment variables.
 
@@ -389,8 +399,8 @@ def extract_env_vars(fall_backs: dict[str, bool]) -> tuple[str, str, str]:
 
     Returns
     -------
-    tuple[str, str, str]
-        Normalized (level, format, destination).
+    tuple[str, str]
+        Normalized (format, destination).
 
     Notes
     -----
@@ -398,14 +408,8 @@ def extract_env_vars(fall_backs: dict[str, bool]) -> tuple[str, str, str]:
     - Destination must be "stderr" or a writable file path.
     """
 
-    level: str = os.environ.get("LOG_LEVEL", "INFO")
     log_format: str = os.environ.get("LOG_FORMAT", "json")
     log_dest: str = os.environ.get("LOG_DEST", "stderr")
-
-    up_level: str = level.upper()
-    if up_level not in LOG_LEVELS:
-        fall_backs["level"] = True
-        level = "INFO"
 
     if log_format.lower() not in LOG_FORMATS:
         fall_backs["log_format"] = True
@@ -419,7 +423,7 @@ def extract_env_vars(fall_backs: dict[str, bool]) -> tuple[str, str, str]:
             fall_backs["log_dest"] = True
             log_dest = "stderr"
 
-    return level.upper(), log_format.lower(), log_dest
+    return log_format.lower(), log_dest
 
 
 def generate_run_id(component_name: str) -> str:
@@ -475,14 +479,7 @@ def handle_fallbacks(logger: InfraLogger, fall_backs: dict[str, bool]) -> None:
 
     for key, triggered in fall_backs.items():
         if triggered:
-            if key == "level":
-                logger.emit(
-                    event="FALLBACK_LOG_LEVEL",
-                    level="WARNING",
-                    msg="Invalid LOG_LEVEL env var; defaulting to INFO",
-                    context={"invalid_value": os.environ.get("LOG_LEVEL", None)},
-                )
-            elif key == "log_format":
+            if key == "log_format":
                 logger.emit(
                     event="FALLBACK_LOG_FORMAT",
                     level="WARNING",
