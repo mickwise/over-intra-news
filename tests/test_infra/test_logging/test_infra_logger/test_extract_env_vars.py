@@ -299,8 +299,6 @@ def set_up_env_vars(
     ----------
     monkeypatch : MonkeyPatch
         Used to delete and then set LOG_LEVEL, LOG_FORMAT, and LOG_DEST.
-    level : str, default=TEST_LOGGER_LEVEL
-        Level to be exported (should be uppercased by the function under test).
     log_format : str, default=TEST_FORMAT
         Format to be exported (should be lowercased by the function under test).
     log_dest : str, default=TEST_DEST
