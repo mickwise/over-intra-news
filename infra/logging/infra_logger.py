@@ -163,7 +163,7 @@ class InfraLogger:
         -----
         - Respects log level threshold: entries below threshold are dropped.
         - Timestamp is recorded in UTC ISO-8601 with a "Z" suffix.
-        - The level parameter is case-insensitive and normalized to UPPERCASE; 
+        - The level parameter is case-insensitive and normalized to UPPERCASE;
           unknown levels fall back to the logger’s current level threshold check.”
         """
         up_level: str = level.upper()
