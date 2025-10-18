@@ -22,7 +22,7 @@ Downstream usage
 ----------------
 Import and use:
 - `connect_to_db()` for connection setup.
-- `load_into_table()` + `execute_batch()` to load iterables efficiently.
+- `load_into_table()` + `flush_values_batch()` to load iterables efficiently.
 - `str_to_timestamp()` for consistent UTC date parsing.
 - `process_chunk()` to retrieve JSON data and apply a local transformer.
 """
@@ -69,6 +69,10 @@ def connect_to_db() -> connection:
     psycopg2.OperationalError
         If the connection cannot be established
         (bad credentials, host unreachable, etc.).
+
+    Notes
+    -----
+    - Sets the connection timezone to UTC.
     """
     return psycopg2.connect(
         host=os.environ["DB_HOST"],
@@ -76,6 +80,7 @@ def connect_to_db() -> connection:
         dbname=os.environ["POSTGRES_DB"],
         user=os.environ["POSTGRES_USER"],
         password=os.environ["POSTGRES_PASSWORD"],
+        options="-c timezone=utc",
     )
 
 
@@ -99,12 +104,12 @@ def load_into_table(conn: connection, row_generator: Iterable[tuple], input_quer
     Raises
     ------
     Exception
-        Propagates any database or driver errors raised by `execute_batch`.
+        Propagates any database or driver errors raised by `flush_values_batch`.
 
     Notes
     -----
     - Uses a preallocated list of length `BATCH_SIZE` to collect rows.
-    - Calls `execute_batch` every time the batch fills; flushes the final partial batch.
+    - Calls `flush_values_batch` every time the batch fills; flushes the final partial batch.
     - Optimized for large streams; avoids holding the entire dataset in memory.
     """
 
@@ -114,10 +119,10 @@ def load_into_table(conn: connection, row_generator: Iterable[tuple], input_quer
         batch[index] = row
         index += 1
         if index == BATCH_SIZE:
-            execute_batch(conn, batch, input_query)
+            flush_values_batch(conn, batch, input_query)
             index = 0
     if index > 0:
-        execute_batch(conn, batch[:index], input_query)
+        flush_values_batch(conn, batch[:index], input_query)
 
 
 def str_to_timestamp(date_str: str) -> pd.Timestamp:
@@ -148,7 +153,7 @@ def str_to_timestamp(date_str: str) -> pd.Timestamp:
     return pd.Timestamp(dt.datetime.strptime(date_str, "%Y-%m-%d"), tz="UTC")
 
 
-def execute_batch(conn: connection, batch: List, input_query: str) -> None:
+def flush_values_batch(conn: connection, batch: List, input_query: str) -> None:
     """
     Execute a single batched INSERT/UPSERT using `psycopg2.extras.execute_values`.
 

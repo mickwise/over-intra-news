@@ -58,7 +58,9 @@ def make_request(
     expect_json: bool = True,
     max_retries: int = 5,
     backoff_factor: float = 0.5,
-    timeout: tuple[float, float] = (3.5, 10),
+    timeout: tuple[float, float] = (3.5, 10.0),
+    sleep_time: float = 0.0,
+    session: requests.Session | None = None,
 ) -> requests.Response:
     """
     Perform a GET request with retry and backoff handling.
@@ -75,6 +77,10 @@ def make_request(
         Base multiplier for exponential backoff.
     timeout : tuple[float, float], default=(3.5, 10)
         (connect_timeout, read_timeout) passed to `requests.get`.
+    sleep_time : float, default=0.0
+        Initial sleep time (seconds) before the first request.
+    session : requests.Session | None, default=None
+        Optional `requests.Session` to use for the request.
 
     Returns
     -------
@@ -93,15 +99,19 @@ def make_request(
     Notes
     -----
     - Retries on `requests.Timeout`, `requests.ConnectionError`,
-    `requests.RequestException`, and `ValueError` from validation.
+      `requests.RequestException`, and `ValueError` from validation.
     - Response JSON is not parsed here; caller should handle content.
+    - If `sleep_time` is provided, it is applied once before the first attempt
+      with a small random jitter.
     """
 
+    if sleep_time > 0.0:
+        time.sleep(sleep_time + random.uniform(0, 0.05))
     header: dict[str, str] = create_header(expect_json)
     last_exception: BaseException | None = None
     for attempt in range(max_retries):
         try:
-            response: requests.Response = try_request(url, header, timeout, expect_json)
+            response: requests.Response = try_request(url, header, timeout, expect_json, session)
             return response
         except RETRYABLE_EXCEPTIONS as e:
             last_exception = e
@@ -117,6 +127,7 @@ def try_request(
     header: dict[str, str],
     timeout: tuple[float, float] = (3.5, 10),
     expect_json: bool = True,
+    session: requests.Session | None = None,
 ) -> requests.Response:
     """
     Send a single GET request and perform immediate validation.
@@ -131,6 +142,8 @@ def try_request(
         (connect_timeout, read_timeout) passed to `requests.get`.
     expect_json : bool, default=True
         If True, enforces that the Content-Type contains JSON.
+    session : requests.Session | None, default=None
+        Optional `requests.Session` to use for the request.
 
     Returns
     -------
@@ -145,7 +158,10 @@ def try_request(
         If JSON is expected but Content-Type is not JSON.
     """
 
-    response = requests.get(url, headers=header, timeout=timeout)
+    if session is not None:
+        response = session.get(url, headers=header, timeout=timeout)
+    else:
+        response = requests.get(url, headers=header, timeout=timeout)
     response.raise_for_status()
     if expect_json:
         if "json" not in response.headers.get("Content-Type", "").lower():
@@ -200,12 +216,16 @@ def check_response(
     -------
     None
 
+    Raises
+    ------
+    requests.HTTPError
+        If the status code is non-retryable (e.g., 400–404) or otherwise invalid.
+
     Notes
     -----
     - Computes sleep duration based on status code or exponential backoff.
     - Jitter is applied by handle_status_code for 5xx or 429 without a usable Retry-After.
       When Retry-After is honored, no jitter is added.
-    - Does not raise; caller is responsible for re-raising the last exception.
     """
 
     sleep_time: float = backoff_factor * (2**attempt)

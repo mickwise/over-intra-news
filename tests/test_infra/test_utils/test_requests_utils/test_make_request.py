@@ -86,7 +86,9 @@ def test_make_request_happy(mocker: MockerFixture) -> None:
     )
     resp: Response = make_request(TEST_URL)
     assert resp is mock_resp
-    mock_try_request.assert_called_once_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON)
+    mock_try_request.assert_called_once_with(
+        TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON, None
+    )
     mock_check_response.assert_not_called()
 
 
@@ -301,7 +303,7 @@ def test_make_request_no_retries(mocker: MockerFixture) -> None:
     with pytest.raises(requests.HTTPError):
         make_request(TEST_URL, max_retries=1)
     assert mock_try_request.call_count == 1
-    mock_try_request.assert_called_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON)
+    mock_try_request.assert_called_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON, None)
     assert mock_check_response.call_count == 1
 
 
@@ -361,7 +363,7 @@ def check_succeed_last(
     # Assertions
     assert resp is success_response
     assert mock_try_request.call_count == TEST_MAX_RETRIES
-    mock_try_request.assert_called_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON)
+    mock_try_request.assert_called_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON, None)
     assert mock_check_response.call_count == TEST_MAX_RETRIES - 1
 
 
@@ -418,7 +420,7 @@ def check_fail_all_retries(
     # Assertions
     assert mock_try_request.call_count == TEST_MAX_RETRIES
     assert mock_check_response.call_count == TEST_MAX_RETRIES
-    mock_try_request.assert_called_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON)
+    mock_try_request.assert_called_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON, None)
 
 
 def check_non_retryable(
@@ -481,7 +483,7 @@ def check_non_retryable(
 
     # Assertions
     assert mock_try_request.call_count == 1
-    mock_try_request.assert_called_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON)
+    mock_try_request.assert_called_with(TEST_URL, TEST_HEADER, TEST_TIMEOUT, TEST_EXPECT_JSON, None)
     assert mock_sleep.call_count == 0
 
 

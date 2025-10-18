@@ -70,6 +70,7 @@ def test_connect_to_db_happy(mocker: MockerFixture, monkeypatch: MonkeyPatch) ->
         dbname=TEST_DBNAME,
         user=TEST_USER,
         password=TEST_PASSWORD,
+        options="-c timezone=utc",
     )
 
 

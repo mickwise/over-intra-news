@@ -1,7 +1,7 @@
 """
 Purpose
 -------
-Unit tests for `infra.utils.db_utils.execute_batch`. Ensures correct cursor usage,
+Unit tests for `infra.utils.db_utils.flush_values_batch`. Ensures correct cursor usage,
 SQL execution, and error propagation when batching inserts into Postgres.
 
 Key behaviors
@@ -28,71 +28,74 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
-from infra.utils.db_utils import execute_batch
+from infra.utils.db_utils import flush_values_batch
 
 
-def test_execute_batch_happy(mocker: MockerFixture) -> None:
+def test_flush_values_batch_happy(mocker: MockerFixture) -> None:
     """
-    Test the happy path: `execute_batch` calls `execute_values` once
-    with the correct cursor, SQL query, and batch.
+        Test the happy path: `flush_values_batch
+    ` calls `execute_values` once
+        with the correct cursor, SQL query, and batch.
 
-    Parameters
-    ----------
-    mocker : MockerFixture
-        Pytest-mock fixture used to patch psycopg2 internals.
+        Parameters
+        ----------
+        mocker : MockerFixture
+            Pytest-mock fixture used to patch psycopg2 internals.
 
-    Returns
-    -------
-    None
+        Returns
+        -------
+        None
 
-    Raises
-    ------
-    AssertionError
-        If the call arguments do not match the expected cursor, query, or batch.
+        Raises
+        ------
+        AssertionError
+            If the call arguments do not match the expected cursor, query, or batch.
 
-    Notes
-    -----
-    - Cursor identity is asserted with `is` to confirm the exact object is used.
+        Notes
+        -----
+        - Cursor identity is asserted with `is` to confirm the exact object is used.
     """
 
     mock_conn, mock_cursor, mock_execute_vals = create_mock_conn_cursor_and_patcher(mocker)
     test_query, test_batch = generate_query_and_batch()
-    execute_batch(mock_conn, test_batch, test_query)
+    flush_values_batch(mock_conn, test_batch, test_query)
     args, _ = mock_execute_vals.call_args
     assert args[0] is mock_cursor
     assert args[1] == test_query
     assert list(args[2]) == test_batch
 
 
-def test_execute_batch_erroneous(mocker: MockerFixture) -> None:
+def test_flush_values_batch_erroneous(mocker: MockerFixture) -> None:
     """
-    Test the erroneous path: `execute_batch` propagates exceptions raised
-    by `execute_values`.
+        Test the erroneous path: `flush_values_batch
+    ` propagates exceptions raised
+        by `execute_values`.
 
-    Parameters
-    ----------
-    mocker : MockerFixture
-        Pytest-mock fixture used to patch psycopg2 internals.
+        Parameters
+        ----------
+        mocker : MockerFixture
+            Pytest-mock fixture used to patch psycopg2 internals.
 
-    Returns
-    -------
-    None
+        Returns
+        -------
+        None
 
-    Raises
-    ------
-    ValueError
-        When `execute_values` is patched with a ValueError side effect.
+        Raises
+        ------
+        ValueError
+            When `execute_values` is patched with a ValueError side effect.
 
-    Notes
-    -----
-    - Confirms that `execute_batch` does not swallow database errors.
+        Notes
+        -----
+        - Confirms that `flush_values_batch
+    ` does not swallow database errors.
     """
 
     mock_conn, _, mock_execute_vals = create_mock_conn_cursor_and_patcher(mocker)
     mock_execute_vals.side_effect = ValueError("boom")
     test_query, test_batch = generate_query_and_batch()
     with pytest.raises(ValueError) as _:
-        execute_batch(mock_conn, test_batch, test_query)
+        flush_values_batch(mock_conn, test_batch, test_query)
 
 
 def create_mock_conn_cursor_and_patcher(
