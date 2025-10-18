@@ -17,6 +17,7 @@ dependencies = [
   "python-dotenv",
   "requests",
   "boto3",
+  "lxml"
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,7 @@ dev = [
   "boto3-stubs",
   "pytest",
   "pytest-mock",
+  "lxml-stubs"
 ]
 
 [tool.mypy]
