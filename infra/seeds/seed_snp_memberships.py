@@ -28,8 +28,8 @@ spells in a subsequent step.
 import os
 
 import pandas as pd
-from dotenv import load_dotenv
 
+from infra.logging.infra_logger import InfraLogger
 from infra.utils.db_utils import str_to_timestamp
 
 FJA05680_SHA: str = "0803e40971b4e470fd3b3bef107b3c6bae579cfc"
@@ -40,13 +40,14 @@ SNP_HISTORICAL_URL: str = (
 )
 
 
-def extract_snp_membership_windows() -> pd.DataFrame:
+def extract_snp_membership_windows(logger: InfraLogger) -> pd.DataFrame:
     """
     Return daily S&P 500 constituent snapshots filtered to the configured date window.
 
     Parameters
     ----------
-    None
+    logger: InfraLogger
+        Structured logger.
 
     Returns
     -------
@@ -67,14 +68,24 @@ def extract_snp_membership_windows() -> pd.DataFrame:
     - This function delegates the actual CSV fetch and filtering
     to `extract_historical_constituents`.
     """
-    load_dotenv()
+
     start_date: pd.Timestamp = str_to_timestamp(os.environ["START_DATE"])
     end_date: pd.Timestamp = str_to_timestamp(os.environ["END_DATE"])
-    return extract_historical_constituents(start_date, end_date)
+    logger.info(
+        "snp_memberships_extraction_start",
+        context={
+            "stage": "extract_snp_membership_windows",
+            "sha": FJA05680_SHA,
+            "url": SNP_HISTORICAL_URL,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+    )
+    return extract_historical_constituents(start_date, end_date, logger)
 
 
 def extract_historical_constituents(
-    start_date: pd.Timestamp, end_date: pd.Timestamp
+    start_date: pd.Timestamp, end_date: pd.Timestamp, logger: InfraLogger
 ) -> pd.DataFrame:
     """
     Load, normalize, and window-filter daily S&P 500 constituent snapshots from a commit-pinned CSV.
@@ -111,6 +122,10 @@ def extract_historical_constituents(
     )
     raw_historical_constituents["date"] = pd.to_datetime(
         raw_historical_constituents["date"], format="%Y-%m-%d", utc=True
+    )
+    raw_historical_constituents.sort_values("date", inplace=True)
+    logger.info(
+        "snp_memberships_extraction_done", context={"stage": "extract_snp_membership_windows"}
     )
     return raw_historical_constituents[
         (raw_historical_constituents["date"] >= start_date)

@@ -28,7 +28,7 @@ Other ingestion scripts rely on this table for date alignment of external data
 (news articles, membership histories, prices).
 """
 
-import datetime
+import datetime as dt
 import os
 from typing import Iterator, Optional, Tuple, TypeAlias
 
@@ -37,12 +37,13 @@ import pandas as pd
 from dotenv import load_dotenv
 from psycopg2.extensions import connection
 
+from infra.logging.infra_logger import InfraLogger, initialize_logger
 from infra.utils.db_utils import connect_to_db, load_into_table
 
 TradingCalendarRow: TypeAlias = Tuple[
-    datetime.date,
-    Optional[datetime.datetime],
-    Optional[datetime.datetime],
+    dt.date,
+    Optional[dt.datetime],
+    Optional[dt.datetime],
     bool,
     bool,
     bool,
@@ -82,18 +83,28 @@ def ingest_nyse() -> None:
     load_dotenv()
     start_date: str = os.environ["START_DATE"]
     end_date: str = os.environ["END_DATE"]
+    logger: InfraLogger = initialize_logger("seed_trading_calendar")
+    logger.info("START_RUN", f"Seeding trading_calendar for NYSE from {start_date} to {end_date}")
     nyse_cal: pd.DataFrame = xcals.get_calendar("XNYS", start_date, end_date).schedule[
         ["open", "close"]
     ]
+    logger.info(
+        "SCHEDULE_FETCHED",
+        f"Fetched {len(nyse_cal)} trading days from exchange_calendars",
+        {
+            "trading_days": len(nyse_cal),
+            "first_day": nyse_cal.index[0].date().isoformat(),
+            "last_day": nyse_cal.index[-1].date().isoformat(),
+        },
+    )
     with connect_to_db() as conn:
-        fill_trading_calendar(conn, nyse_cal)
+        logger.info("UPSERT_BEGIN", "Connected to Postgres")
+        fill_trading_calendar(conn, nyse_cal, logger)
     conn.close()
+    logger.info("RUN_COMPLETE", "Completed seeding trading_calendar", {"status": "success"})
 
 
-def fill_trading_calendar(
-    conn: connection,
-    nyse_cal: pd.DataFrame,
-) -> None:
+def fill_trading_calendar(conn: connection, nyse_cal: pd.DataFrame, logger: InfraLogger) -> None:
     """
     Upsert a NYSE calendar snapshot into Postgres using batched inserts.
 
@@ -119,9 +130,11 @@ def fill_trading_calendar(
     - Uses `ON CONFLICT (trading_day) DO UPDATE` to keep rows fresh.
     - Rows are streamed by `calendar_row_generator` for gap filling.
     """
+
     input_query: str = generate_db_query()
     row_generator: Iterator[TradingCalendarRow] = calendar_row_generator(nyse_cal)
     load_into_table(conn, row_generator, input_query)
+    logger.info("UPSERT_COMPLETE", "Upserted trading_calendar rows")
 
 
 def generate_db_query() -> str:
@@ -198,7 +211,7 @@ def calendar_row_generator(nyse_cal: pd.DataFrame) -> Iterator[TradingCalendarRo
         delta_days = (curr_day - prev_day).days
         if delta_days > 1:
             for i in range(1, delta_days):
-                gap_date = prev_day + datetime.timedelta(days=i)
+                gap_date = prev_day + dt.timedelta(days=i)
                 yield extract_non_trading_row(gap_date)
         yield extract_row(nyse_cal.loc[day])
         prev_day = curr_day
@@ -237,9 +250,9 @@ def extract_row(row: pd.Series) -> TradingCalendarRow:
 
     if not isinstance(row.name, pd.Timestamp):
         raise TypeError("Row index must be a pd.Timestamp")
-    trading_day: datetime.date = row.name.date()
-    session_open_utc: datetime.datetime = row["open"]
-    session_close_utc: datetime.datetime = row["close"]
+    trading_day: dt.date = row.name.date()
+    session_open_utc: dt.datetime = row["open"]
+    session_close_utc: dt.datetime = row["close"]
     is_trading_day: bool = not pd.isna(session_open_utc) and not pd.isna(session_close_utc)
     is_half_day: bool = False
     if is_trading_day:
@@ -259,7 +272,7 @@ def extract_row(row: pd.Series) -> TradingCalendarRow:
     )
 
 
-def extract_non_trading_row(date: datetime.date) -> TradingCalendarRow:
+def extract_non_trading_row(date: dt.date) -> TradingCalendarRow:
     """
     Build a `trading_calendar` row for a non-trading civil date.
 
@@ -286,7 +299,7 @@ def extract_non_trading_row(date: datetime.date) -> TradingCalendarRow:
     - Weekend is Saturday/Sunday.
     - Non-weekend and non-trading implies `is_holiday=True`.
     """
-    trading_day: datetime.date = date
+    trading_day: dt.date = date
     is_weekend: bool = trading_day.weekday() >= SATURDAY
     return (
         trading_day,
