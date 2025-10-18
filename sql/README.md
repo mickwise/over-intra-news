@@ -12,10 +12,10 @@
 - Primary key: secid
 - Why: Stable internal ID that doesn’t change when tickers/mergers happen.
 
-### identifier_history
-- Row: One external identifier active for a company over a validity window
-- Primary key: (secid, id_type, id_value, effective_start)
-- Why: Maps secid to ticker/CIK/FIGI/etc. across time so joins don’t break.
+### ticker_history
+- Row: One ticker for a company over a validity window
+- Primary key: (secid, ticker, effective_start)
+- Why: Maps secid to ticker across time so joins don’t break.
 
 ### sp500_membership
 - Row: One company on one trading day
