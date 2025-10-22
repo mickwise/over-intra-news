@@ -14,7 +14,7 @@
 --   - CIK is a 10-digit, zero-padded text identifier (primary firm key).
 --   - validity_window is a DATE range with LOWER_INC = true, UPPER_INC = false.
 --   - Non-empty, finite bounds are enforced; windows may not overlap per CIK.
---   - Names are trimmed non-empty TEXT.
+--   - Company names are trimmed non-empty TEXT.
 --
 -- Keys & constraints
 --   - Primary key: (cik, validity_window).
@@ -42,6 +42,7 @@
 --     from dated sources; re-window adjacent episodes as needed.
 -- =============================================================================
 
+CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE TABLE IF NOT EXISTS security_profile_history (
 
     -- Central Index Key (CIK) as a security id (10-digit zero-padded string)
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS security_profile_history (
     validity_window DATERANGE NOT NULL,
 
     -- Name of the security
-    name TEXT NOT NULL,
+    company_name TEXT NOT NULL,
 
     -- Source of the profile data (e.g., SEC, Bloomberg)
     source TEXT NOT NULL,
@@ -69,17 +70,17 @@ CREATE TABLE IF NOT EXISTS security_profile_history (
     -- Ensure valid validity window: non-empty, finite, ordered, half-open
     CONSTRAINT valid_date_range CHECK
     (
-        NOT ISEMPTY(validity_window)
+        NOT isempty(validity_window)
         AND
-        LOWER_INF(validity_window) = false
+        lower_inf(validity_window) = false
         AND
-        UPPER_INF(validity_window) = false
+        upper_inf(validity_window) = false
         AND
-        (LOWER(validity_window) < UPPER(validity_window))
+        (lower(validity_window) < upper(validity_window))
         AND
-        LOWER_INC(validity_window) = true
+        lower_inc(validity_window) = true
         AND
-        UPPER_INC(validity_window) = false
+        upper_inc(validity_window) = false
     ),
 
     -- Ensure CIK is numeric and zero-padded to 10 digits
@@ -113,7 +114,7 @@ COMMENT ON COLUMN security_profile_history.validity_window IS
 'DATE DATERANGE for the episode; half-open [start, end),
 finite bounds, non-overlapping per CIK (GiST exclusion).';
 
-COMMENT ON COLUMN security_profile_history.name IS
+COMMENT ON COLUMN security_profile_history.company_name IS
 'Firm/legal name in effect over validity_window; trimmed, non-empty TEXT.';
 
 COMMENT ON COLUMN security_profile_history.source IS

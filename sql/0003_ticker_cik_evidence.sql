@@ -16,7 +16,7 @@
 --   - CIK is a zero-padded 10-digit TEXT identifier.
 --   - validity_window is a DATE range with LOWER_INC = true, UPPER_INC = false,
 --     finite and non-empty. filed_at::DATE must lie inside validity_window.
---   - Accessions are globally unique when present (UNIQUE).
+--   - Accessions are globally unique identifiers at the SEC submission level.
 --
 -- Keys & constraints
 --   - Primary key: evidence_id (stable ID from upstream ingest).
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS ticker_cik_evidence (
     filed_at TIMESTAMPTZ NOT NULL,
 
     -- Accession number of the filing
-    accession_num TEXT NOT NULL UNIQUE,
+    accession_num TEXT NOT NULL,
 
     -- Filing form type (e.g., 10-K/10-Q/8-K).
     form_type TEXT,
@@ -176,7 +176,7 @@ COMMENT ON COLUMN ticker_cik_evidence.validity_window IS
 'DATE DATERANGE used for the filing search;
 half-open [start, end), finite, non-empty.';
 
-COMMENT ON COLUMN ticker_cik_evidence.name IS
+COMMENT ON COLUMN ticker_cik_evidence.company_name IS
 'Firm/legal name in effect over validity_window; trimmed, non-empty TEXT.';
 
 COMMENT ON COLUMN ticker_cik_evidence.filed_at IS
