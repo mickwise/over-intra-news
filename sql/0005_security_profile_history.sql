@@ -85,11 +85,12 @@ CREATE TABLE IF NOT EXISTS security_profile_history (
     -- Ensure CIK is numeric and zero-padded to 10 digits
     CONSTRAINT valid_cik CHECK (cik ~ '^[0-9]{10}$'),
 
-    -- Ensure name validity
-    CONSTRAINT valid_name CHECK (BTRIM(name) <> ''),
+    -- Ensure name is trimmed and non-empty
+    CONSTRAINT ck_company_name_trimmed CHECK
+    (btrim(company_name) <> '' AND company_name = btrim(company_name)),
 
     -- Ensure source validity
-    CONSTRAINT valid_source CHECK (BTRIM(source) <> ''),
+    CONSTRAINT valid_source CHECK (btrim(source) <> ''),
 
     -- Ensure no two rows have overlapping validity windows for the same CIK
     CONSTRAINT no_overlapping_validity_windows

@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS ticker_cik_evidence (
     -- Validity window used for filing searches
     validity_window DATERANGE NOT NULL,
 
+    -- Company name as observed in this hit
+    company_name TEXT NOT NULL,
+
     -- ========================
     -- Filing-specific attributes
     -- ========================
@@ -125,6 +128,10 @@ CREATE TABLE IF NOT EXISTS ticker_cik_evidence (
     -- Ensure source is non empty
     CONSTRAINT ck_source_non_empty CHECK (btrim(source) <> ''),
 
+    -- Ensure name is trimmed and non-empty
+    CONSTRAINT ck_company_name_trimmed CHECK
+    (btrim(company_name) <> '' AND company_name = btrim(company_name)),
+
     -- Ensure form type is trimmed if not null
     CONSTRAINT ck_form_type_trimmed
     CHECK (form_type IS null OR form_type = btrim(form_type)),
@@ -168,6 +175,9 @@ COMMENT ON COLUMN ticker_cik_evidence.evidence_id IS
 COMMENT ON COLUMN ticker_cik_evidence.validity_window IS
 'DATE DATERANGE used for the filing search;
 half-open [start, end), finite, non-empty.';
+
+COMMENT ON COLUMN ticker_cik_evidence.name IS
+'Firm/legal name in effect over validity_window; trimmed, non-empty TEXT.';
 
 COMMENT ON COLUMN ticker_cik_evidence.filed_at IS
 'Timestamp the filing was filed; must lie within validity_window.';
