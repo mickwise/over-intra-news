@@ -14,8 +14,8 @@ Key behaviors
 - Constructs canonical `RunData` and `FilledLinkData` dictionaries used by the module
   under test.
 - Provides patch bundles that stub out delegate functions (e.g., `extract_data_from_links`,
-  `build_mapping_evidence`, `create_name_record`, `find_all_elements`,
-  `set_atom_entry`, `handle_alternate_link`) with predictable fakes.
+  `build_mapping_evidence`, `find_all_elements`, `set_atom_entry`, `handle_alternate_link`)
+  with predictable fakes.
 
 Conventions
 -----------
@@ -35,13 +35,15 @@ from unittest.mock import MagicMock
 import pandas as pd
 from pytest_mock import MockerFixture
 
-import infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_core as core
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_filing_parse import FilledLinkData
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_utils import (
+import infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_core as core
+from infra.seeds.seed_firm_characteristics.records.table_records import ValidityWindow
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_filing_parse import (
+    FilledLinkData,
+)
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_utils import (
     NameSpaceBindings,
     RunData,
 )
-from infra.seeds.seed_firm_characteristics.records.table_records import ValidityWindow
 
 # fmt: off
 from tests.test_infra.test_seeds.test_seed_firm_characteristics.test_edgar_search\
@@ -201,7 +203,7 @@ def make_filled_link_data(
     cik: str,
     form_type: str,
     filed_at: pd.Timestamp,
-    company_name: str | None,
+    company_name: str,
 ) -> FilledLinkData:
     """
     Construct a complete `FilledLinkData` dictionary for the happy path.
@@ -216,8 +218,8 @@ def make_filled_link_data(
         Filing form type (e.g., "10-K"). Must be considered eligible by the caller.
     filed_at : pandas.Timestamp
         Filing date/time; typically UTC.
-    company_name : str | None
-        Parsed company name or None if not available.
+    company_name : str
+        Parsed company name.
 
     Returns
     -------
@@ -246,7 +248,7 @@ def make_filled_link_data(
 def mock_helpers_extract_entry_data(
     mocker: MockerFixture,
     link_data: FilledLinkData,
-) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
+) -> tuple[MagicMock, MagicMock]:
     """
     Patch delegates used by `extract_entry_data` and return their mocks.
 
@@ -254,22 +256,16 @@ def mock_helpers_extract_entry_data(
     ----------
     mocker : pytest_mock.MockerFixture
         Pytest-mock fixture used to apply patches.
-    link_data : dict
+    link_data : FilledLinkData
         The value to be returned by `extract_data_from_links(...)`.
 
     Returns
     -------
-    tuple[MagicMock, MagicMock, MagicMock, MagicMock]
-        (evidence_obj, name_record_obj, mock_build_evidence, mock_create_name)
+    tuple[MagicMock, MagicMock]
+        (evidence_obj, mock_build_evidence)
         where:
             - `evidence_obj` is the MagicMock returned by `build_mapping_evidence`.
-            - `name_record_obj` is the MagicMock returned by `create_name_record`.
             - `mock_build_evidence` is the patched function object.
-            - `mock_create_name` is the patched function object.
-
-    Raises
-    ------
-    None
 
     Notes
     -----
@@ -285,11 +281,7 @@ def mock_helpers_extract_entry_data(
         core, "build_mapping_evidence", return_value=evidence_obj
     )
 
-    name_record_obj: MagicMock = MagicMock()
-    mock_create_name: MagicMock = mocker.patch.object(
-        core, "create_name_record", return_value=name_record_obj
-    )
-    return evidence_obj, name_record_obj, mock_build_evidence, mock_create_name
+    return evidence_obj, mock_build_evidence
 
 
 def mock_helpers_extract_data_from_links(

@@ -28,11 +28,15 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_filing_parse import FilledLinkData
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_core import (
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_filing_parse import (
+    FilledLinkData,
+)
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_core import (
     extract_data_from_links,
 )
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_utils import RunData
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_utils import (
+    RunData,
+)
 
 # fmt: off
 from tests.test_infra.test_seeds.test_seed_firm_characteristics.test_edgar_search.\

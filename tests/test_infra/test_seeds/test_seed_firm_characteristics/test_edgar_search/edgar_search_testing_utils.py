@@ -18,16 +18,18 @@ Conventions
 
 Downstream usage
 ----------------
-Import TEST_VALIDITY_WINDOW, TEST_TICKER, UPDATED_AT_START, and TEST_RAW_RECORD
-from this module in test files that need consistent window bounds, timestamps,
-or a baseline RawRecord envelope.
+Import TEST_VALIDITY_WINDOW, TEST_TICKER, UPDATED_AT_START, TEST_RAW_RECORD and
+TEST_COMPANY_NAME from this module in test files that need consistent window bounds,
+timestamps, or a baseline RawRecord envelope.
 """
 
 import pandas as pd
 
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_core import SOURCE
 from infra.seeds.seed_firm_characteristics.records.raw_record import RawRecord
 from infra.seeds.seed_firm_characteristics.records.table_records import ValidityWindow
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_core import (
+    SOURCE,
+)
 
 TEST_VALIDITY_WINDOW: ValidityWindow = (
     pd.Timestamp("2024-01-02T00:00:00Z"),
@@ -40,3 +42,4 @@ TEST_RAW_RECORD: RawRecord = {
     "source_chain": SOURCE,
     "producer": "fetch_edgar_evidence",
 }
+TEST_COMPANY_NAME: str = "Test Company Inc."

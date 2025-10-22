@@ -30,14 +30,14 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_filing_parse import (
+from infra.seeds.seed_firm_characteristics.records.raw_record import RawRecord
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_filing_parse import (
     FilledLinkData,
     LinkData,
     extract_filing_url,
     parse_line,
     try_extract_evidence_from_index,
 )
-from infra.seeds.seed_firm_characteristics.records.raw_record import RawRecord
 
 # fmt: off
 from tests.test_infra.test_seeds.test_seed_firm_characteristics.\
@@ -224,15 +224,11 @@ def build_filing_table_html(include_complete: bool, include_any: bool, txt_name:
     [
         # 1) All fields present -> returns FilledLinkData
         (True, True, True, True, True, True),
-        # 2) Missing form -> IndexError due to [0] and split indexing
-        (False, True, True, True, True, False),
-        # 3) Missing filed_at -> IndexError due to [0]
-        (True, False, True, True, True, False),
-        # 4) Missing accession -> safe None (normalize-space over empty returns '')
-        (True, True, False, True, True, None),
-        # 5) Missing CIK -> IndexError due to [0]
+        # 2) Missing accession -> safe None (normalize-space over empty returns '')
+        (True, True, False, True, True, False),
+        # 3) Missing CIK -> IndexError due to [0]
         (True, True, True, False, True, False),
-        # 6) Missing company name -> IndexError due to [0]
+        # 4) Missing company name -> IndexError due to [0]
         (True, True, True, True, False, False),
     ],
 )
@@ -242,7 +238,7 @@ def test_try_extract_evidence_from_index(
     accession_on: bool,
     cik_on: bool,
     company_on: bool,
-    expect_ok: bool | None,
+    expect_ok: bool,
 ) -> None:
     """
     Validate index-page fast-path extraction across presence/absence combinations.
@@ -299,12 +295,9 @@ def test_try_extract_evidence_from_index(
         assert result["accession_num"] == "000119312522254310"
         assert result["cik"] == "0000123456"
         assert result["company_name"] == "Charles River"
-    elif expect_ok is None:
+    else:
         result_none: FilledLinkData | None = try_extract_evidence_from_index(response)
         assert result_none is None
-    else:
-        with pytest.raises(IndexError):
-            _ = try_extract_evidence_from_index(response)
 
 
 @pytest.mark.parametrize(

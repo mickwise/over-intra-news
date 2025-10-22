@@ -26,12 +26,14 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_core import (
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_core import (
     Entries,
     check_entry_form_type_eligibility,
     extract_entries_and_namespace,
 )
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_utils import NameSpaceBindings
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_utils import (
+    NameSpaceBindings,
+)
 
 # fmt: off
 from tests.test_infra.test_seeds.test_seed_firm_characteristics.test_edgar_search.\
@@ -97,7 +99,8 @@ def test_check_entry_form_type_eligibility(
         return None
 
     mocker.patch(
-        "infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_core.find_element",
+        "infra.seeds.seed_firm_characteristics.seed_evidence"
+        ".edgar_search.edgar_search_core.find_element",
         side_effect=side_effect,
     )
     result = check_entry_form_type_eligibility(MagicMock(), None)

@@ -30,7 +30,7 @@ import pandas as pd
 import pytest
 from pytest_mock import MockerFixture
 
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_utils import (
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_utils import (
     REQUEST_COUNT,
     RunData,
     evaluate_page_break_conditions,
@@ -114,7 +114,8 @@ def test_evaluate_updated_timestamp(
         return None
 
     mocker.patch(
-        "infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_utils.find_element",
+        "infra.seeds.seed_firm_characteristics.seed_evidence."
+        "edgar_search.edgar_search_utils.find_element",
         side_effect=find_element_side_effect,
     )
 

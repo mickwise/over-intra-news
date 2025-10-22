@@ -2,19 +2,19 @@
 Purpose
 -------
 Unit tests for the orchestration function that gates by timestamps, resolves
-filing metadata via delegate, and constructs evidence and optional name records.
+filing metadata via delegate, and constructs evidence.
 
 Key behaviors
 -------------
 - Early-exit when `updated_ts` is outside the half-open validity window.
 - Early-exit when filing `filed_at` is outside the half-open validity window.
-- Happy path builds `MappingEvidence` and optionally `NameRecord` depending on
-  presence of `company_name`.
+- Happy path builds `MappingEvidence`; the `company_name` is passed through to
+  `MappingEvidence.name`.
 
 Conventions
 -----------
-- Delegates (`extract_data_from_links`, `build_mapping_evidence`, `create_name_record`)
-  are patched so assertions can focus on control flow and wiring.
+- Delegates (`extract_data_from_links`, `build_mapping_evidence`) are patched so
+  assertions can focus on control flow and wiring.
 - Positional arguments to `build_mapping_evidence` are asserted to match the
   production signature ordering.
 
@@ -31,14 +31,19 @@ import pandas as pd
 import pytest
 from pytest_mock import MockerFixture
 
-import infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_core as core
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_filing_parse import FilledLinkData
-from infra.seeds.seed_firm_characteristics.edgar_search.edgar_search_utils import RunData
-from infra.seeds.seed_firm_characteristics.records.table_records import MappingEvidence, NameRecord
+import infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_core as core
+from infra.seeds.seed_firm_characteristics.records.table_records import MappingEvidence
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_filing_parse import (
+    FilledLinkData,
+)
+from infra.seeds.seed_firm_characteristics.seed_evidence.edgar_search.edgar_search_utils import (
+    RunData,
+)
 
 # fmt: off
 from tests.test_infra.test_seeds.test_seed_firm_characteristics.test_edgar_search.\
     edgar_search_testing_utils import (
+    TEST_COMPANY_NAME,
     TEST_TICKER,
     TEST_VALIDITY_WINDOW,
 )
@@ -53,7 +58,7 @@ from tests.test_infra.test_seeds.test_seed_firm_characteristics.test_edgar_searc
 
 # fmt: on
 
-ExpectedReturnType: TypeAlias = tuple[MappingEvidence, NameRecord | None] | None
+ExpectedReturnType: TypeAlias = MappingEvidence | None
 
 
 @pytest.mark.parametrize(
@@ -164,39 +169,39 @@ def test_extract_entry_data_filed_at_outside_window(
     assert result is None
 
 
-@pytest.mark.parametrize(
-    "company_name, expect_name_record", [(None, False), ("Charles River", True)]
-)
-def test_extract_entry_data_happy_path(
-    mocker: MockerFixture, company_name: str | None, expect_name_record: bool
-) -> None:
+def test_extract_entry_data_happy_path(mocker: MockerFixture) -> None:
     """
-    Build evidence and conditionally build name record when all gates pass.
+    Builds evidence for the happy path and verifies that company name and other fields are
+    wired into `build_mapping_evidence`, and that
+    `core.extract_entry_data` returns the mocked evidence object.
 
     Parameters
     ----------
     mocker : pytest_mock.MockerFixture
-        Used to patch delegates and capture call arguments.
-    company_name : str | None
-        Optional company name to include in the returned `FilledLinkData`.
-    expect_name_record : bool
-        Whether a `NameRecord` is expected based on `company_name`.
+        Fixture to patch collaborators invoked by the function under test and to capture
+        call arguments.
 
     Returns
     -------
     None
+        The test passes if the function returns the mocked evidence and collaborators are
+        called with the expected arguments.
 
     Raises
     ------
     AssertionError
-        If the return value, delegate calls, or evidence argument wiring is incorrect.
+        If the function does not return the mocked evidence object, or if
+        `build_mapping_evidence` is not called exactly once with the expected signature.
 
     Notes
     -----
-    - Asserts that `build_mapping_evidence` is called once with the expected positional
-      arguments (ticker, cik, filed_at, validity_window, ..., form_type, accession_num).
-    - Asserts that `create_name_record` is called exactly once if and only if a non-empty
-      `company_name` is present.
+    - Patches `extract_data_from_links` to return a `FilledLinkData` whose `filed_at` lies
+      inside the window.
+    - Patches `generate_initial_raw_record` to supply a stable `raw_record`.
+    - Asserts `build_mapping_evidence` is called with:
+      (ticker, cik, filed_at, validity_window, source, raw_record, form_type,
+      accession_num, company_name).
+    - Confirms end-to-end wiring without any network or XML parsing.
     """
 
     filed_at_inside = pd.Timestamp("2024-01-05T00:00:00Z")
@@ -207,21 +212,12 @@ def test_extract_entry_data_happy_path(
         cik="0000123456",
         form_type="10-K",
         filed_at=filed_at_inside,
-        company_name=company_name,
+        company_name=TEST_COMPANY_NAME,
     )
-    evidence_obj, name_record_obj, mock_build_evidence, mock_create_name = (
-        mock_helpers_extract_entry_data(mocker, link_data=link_data)
-    )
+    evidence_obj, mock_build_evidence = mock_helpers_extract_entry_data(mocker, link_data=link_data)
 
     result = core.extract_entry_data(run_data, UPDATED_WITHIN_WINDOW, MagicMock())
-
-    # Evidence always returned on happy path
-    if expect_name_record:
-        assert result == (evidence_obj, name_record_obj)
-        mock_create_name.assert_called_once_with(company_name, evidence_obj)
-    else:
-        assert result == (evidence_obj, None)
-        mock_create_name.assert_not_called()
+    assert result is evidence_obj
 
     # Sanity: evidence wiring uses the parsed fields and window
     mock_build_evidence.assert_called_once_with(
@@ -233,4 +229,5 @@ def test_extract_entry_data_happy_path(
         TEST_RAW_RECORD,
         "10-K",
         link_data["accession_num"],
+        link_data["company_name"],
     )
