@@ -205,15 +205,15 @@ Using the multi-candidate adjudication notebook, each `(ticker, validity_window)
 - **Rule 2** – multiple candidates, but exactly one with in-window periodic filings.
 - **Manual review** – anything that still can’t be resolved by periodic-based rules and lands in `ticker_cik_manual_adjudication`.
 
-![Distribution of evidence review outcomes](notebooks/data_notebooks/Distribution_of_Auto_Accepted_Evidence_by_Rule.png)
+![Distribution of evidence review outcomes](Distribution_of_Auto_Accepted_Evidence_by_Rule.png)
 
 The figure shows that the **vast majority of episodes are resolved deterministically** by periodic filings (Rule 1), a small additional slice by Rule 2, and only a **single-digit percentage** require manual adjudication. The manual layer is a narrow, explicitly audited tail rather than the main driver.
 
 ### 5.2 Name stability of candidate CIKs
 
-In the security-master notebook, after applying `company_name_canonicalizer`, `name_count` is computed and the number of distinct canonical company names observed per `(ticker, validity_window, candidate_cik)`.
+In the security-master notebook, after applying `company_name_canonicalizer`, `name_count` is computed as the number of distinct canonical company names observed per `(ticker, validity_window, candidate_cik)`.
 
-![Distribution of candidate CIKs by number of unique company names](notebooks/data_notebooks/Distribution_of_Company_Name_Counts.png)
+![Distribution of candidate CIKs by number of unique company names](Distribution_of_Company_Name_Counts.png)
 
 The plot shows that **most candidate CIKs have a single canonical name** over their S&P 500 window. Only a small fraction exhibit multiple canonical names and need explicit inspection. In other words, once you strip suffixes and formatting, genuine name ambiguity is the exception, not the rule.
 
@@ -229,7 +229,7 @@ My goal here is not to claim I’ve “improved” on their setup, but to show t
 - The **news exposures you compute** depend on whether you attach the right articles to the right firm at the right time.
 - The **over-intra patterns you measure** (continuation, reversals, cross-sectional spreads) can be biased by survivorship, ticker drift, or look-ahead in the identity layer.
 
-The meaning:
+In other words:
 
 > If two people run the same “news explains overnight vs intraday returns” model, but only one of them has done this kind of entity work, they are **not** doing the same research.
 
