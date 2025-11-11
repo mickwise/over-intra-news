@@ -142,7 +142,7 @@ def load_auto_accepted_names(
         FROM {AUTO_PICK_TABLE} AS auto_pick_table
         JOIN ticker_cik_mapping AS mapping_table
         ON mapping_table.ticker = auto_pick_table.ticker
-        AND mapping_table.cik    = auto_pick_table.cik
+        AND mapping_table.cik = auto_pick_table.cik
         AND mapping_table.validity_window = auto_pick_table.validity_window::daterange
         JOIN ticker_cik_evidence AS evidence_table
         ON evidence_table.evidence_id = mapping_table.evidence_id
