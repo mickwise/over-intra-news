@@ -1,0 +1,7 @@
+# local_data/symbol_aliases.csv
+# Semantics: rewrite alias→canonical ONLY for dates in [start_date, end_date)
+# Columns are required; dates are UTC, day precision.
+alias,canonical,start_date,end_date,source,notes
+AABA,YHOO,2016-08-01,2017-06-18,fortune|nasdaq,"Yahoo renamed Altaba; AABA began trading 2017-06-19"
+WYND,WYN,2016-08-01,2018-05-30,SEC|8-K,"On May 31, 2018, in connection with Wyndham Worldwide’s previously announced spin-off of Wyndham Hotels & Resorts, Inc., its wholly owned subsidiary (“Wyndham Hotels”), Wyndham Worldwide changed its name to “Wyndham Destinations, Inc.”"
+KDP,DPS,2016-08-01,2018-07-02,SEC|8-K+EX-99.1,"Dr Pepper Snapple Group, Inc. (NYSE: DPS) renamed Keurig Dr Pepper Inc.; KDP ticker begins trading on NYSE 2018-07-10 after closing of Keurig merger."

@@ -208,7 +208,6 @@ __marimo__/
 data/
 .env
 *.parquet
-*.csv
 *.feather
 *.db
 __pycache__/
@@ -241,3 +240,6 @@ pgdata/
 
 # notes
 **/notes/
+
+# deprecated directory
+deprecated/

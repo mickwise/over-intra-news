@@ -26,6 +26,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]" -c ci-constraints.txt
 
+      - name: "Sanity: packages import from src-layout"
+        run: |
+          python - <<'PY'
+          import sys, infra, notebooks_utils, aws
+          print("python:", sys.executable)
+          print("infra :", infra.__file__)
+          assert '/src/' in infra.__file__, f"unexpected path: {infra.__file__}"
+          PY
+
       - name: Ruff (lint)
         run: ruff check $(git ls-files '*.py')
 
@@ -42,16 +51,16 @@ jobs:
         run: |
           sudo apt-get install -y shfmt
           shfmt -l -w $(git ls-files '*.sh' '*.bats')
-      
+
       - name: ShellCheck (lint bash)
         uses: ludeeus/action-shellcheck@master
         with:
-          scandir: ./aws/scripts
+          scandir: ./src/aws/scripts
           check_together: 'yes'
           severity: error
         env:
           SHELLCHECK_OPTS: -e SC1091
-        
+
       - name: Setup Bats and libs
         id: setup-bats
         uses: bats-core/bats-action@3.0.1
@@ -63,9 +72,9 @@ jobs:
           BATS_SHELL: /usr/bin/bash
         run: |
           shopt -s nullglob globstar
-          files=(tests/bash/*.bats tests/bash/**/*.bats)
+          files=(tests/test_aws/test_scripts/*.bats)
           if (( ${#files[@]} == 0 )); then
             echo "No Bats tests found; skipping."
           else
-            bats -r tests/bash
+            bats -r tests/test_aws/test_scripts/
           fi

@@ -1,104 +1,246 @@
 """
 Purpose
 -------
-Validate DST-aware day-length math in `calculate_minutes`.
+Unit tests for `aws.ccnews_sampler.quota`.
 
-Behavior validated
-------------------
-- `day_length_min` equals 1380 minutes on the spring-forward day (23h),
-  1440 minutes on a normal day (24h), and 1500 minutes on the fall-back day (25h).
-- `minutes_open` is 390 minutes (6.5h) for the provided session bounds,
-  regardless of DST.
+Key behaviors
+-------------
+- Validate that `compute_daily_caps`:
+  - produces integer intraday and overnight caps whose sum equals `daily_cap`
+    for every day,
+  - respects edge cases where `overnight_fraction` is 0.0 or 1.0,
+  - implements unbiased randomized rounding via a Bernoulli step on the
+    fractional remainder,
+  - mutates the input DataFrame in place and returns the same object.
 
 Conventions
 -----------
-- Session bounds are specified as UTC instants:
-  * 2024-03-10 uses 14:30–21:00Z (EST trading day).
-  * 2024-03-11 uses 13:30–20:00Z (EDT trading day).
-  * 2024-11-03 uses 14:30–21:00Z (EST trading day).
-- The DataFrame is indexed by `trading_day` and mutated in place by `calculate_minutes`.
+- All tests operate on small, fully in-memory DataFrames.
+- Randomness is controlled via a deterministic dummy RNG so outcomes are
+  reproducible and not tied to NumPy’s generator internals.
 
-Notes
------
-None
+Downstream usage
+----------------
+- Run via `pytest` as part of the CI suite.
+- Serves as executable documentation of how per-day intraday and overnight
+  caps are derived from `overnight_fraction` and `daily_cap`.
 """
 
+from __future__ import annotations
+
+from typing import Iterable, List, cast
+
+import numpy as np
 import pandas as pd
 
-from aws.ccnews_sampler.quota import calculate_minutes
+from aws.ccnews_sampler import quota
 
 
-def test_calculate_minutes_dst() -> None:
+class DummyRNG:
     """
-    Verify day-length and session-minute calculations across DST boundaries.
+    Purpose
+    -------
+    Minimal stand-in for `numpy.random.Generator` used to drive deterministic
+    randomized rounding in tests.
 
-    Behavior validated
-    ------------------
-    - 2024-03-10 (spring forward): day_length_min == 1380; minutes_open == 390.
-    - 2024-03-11 (first EDT trading day): day_length_min == 1440; minutes_open == 390.
-    - 2024-11-03 (fall back): day_length_min == 1500; minutes_open == 390.
+    Key behaviors
+    -------------
+    - Returns a fixed sequence of pre-specified uniform(0, 1) values via
+      a `.random(n)` method, matching the interface expected by
+      `compute_daily_caps`.
+    - Asserts that the requested number of draws matches the configured
+      length, catching accidental size mismatches in tests.
+
+    Parameters
+    ----------
+    values : Iterable[float]
+        Sequence of values in [0.0, 1.0] to return on the next `.random(n)`
+        call, in order.
+
+    Attributes
+    ----------
+    _values : list[float]
+        Backing store for the deterministic sequence of random draws.
 
     Notes
     -----
-    - Session bounds are given in UTC and correspond to 9:30–16:00 NY time
-      on each date (EST/EDT as appropriate).
+    - This is deliberately minimal and only implements the subset of the
+      `numpy.random.Generator` interface used by the production code.
+    - Using a dummy RNG instead of a real Generator keeps tests robust to
+      implementation changes in NumPy’s RNG algorithms.
     """
 
-    nyse_cal = generate_test_nyse_cal()
-    calculate_minutes(nyse_cal)
-    assert nyse_cal.loc["2024-03-10", "minutes_open"] == 390  # EST
-    assert nyse_cal.loc["2024-03-10", "day_length_min"] == 1380  # EST
-    assert nyse_cal.loc["2024-03-11", "minutes_open"] == 390  # EDT
-    assert nyse_cal.loc["2024-03-11", "day_length_min"] == 1440  # EDT
-    assert nyse_cal.loc["2024-11-03", "minutes_open"] == 390  # EST
-    assert nyse_cal.loc["2024-11-03", "day_length_min"] == 1500  # EST
+    def __init__(self, values: Iterable[float]) -> None:
+        self._values: List[float] = list(values)
+
+    def random(self, n: int) -> np.ndarray:
+        """
+        Return the next `n` deterministic uniform(0, 1) draws as a NumPy array.
+
+        Parameters
+        ----------
+        n : int
+            Number of draws requested by `compute_daily_caps`.
+
+        Returns
+        -------
+        numpy.ndarray
+            Array of shape `(n,)` containing the configured values in order.
+
+        Raises
+        ------
+        AssertionError
+            If `n` does not match the number of configured values, indicating
+            that the test setup is inconsistent with the production call.
+        """
+        assert n == len(self._values), f"DummyRNG expected {len(self._values)} draws, got {n}"
+        return np.asarray(self._values, dtype=float)
 
 
-def generate_test_nyse_cal() -> pd.DataFrame:
+def test_compute_daily_caps_respects_edge_cases_and_invariants() -> None:
     """
-    Build a minimal three-row calendar around 2024 DST transitions.
+    Validate caps for a mix of overnight fractions, including 0.0 and 1.0.
+
+    Parameters
+    ----------
+    None
 
     Returns
     -------
-    pandas.DataFrame
-        Index: `trading_day` (Timestamp)
-        Columns:
-          - session_open_utc  (tz-aware UTC)
-          - session_close_utc (tz-aware UTC)
+    None
+        The test passes if, for each row:
+            - `intraday_cap` and `overnight_cap` are integers,
+            - their sum equals `daily_cap`,
+            - `overnight_fraction = 0.0` ⇒ full intraday, zero overnight,
+            - `overnight_fraction = 1.0` ⇒ zero intraday, full overnight.
 
-    Composition
-    -----------
-    - 2024-03-10: 14:30–21:00Z  (EST 09:30–16:00)
-    - 2024-03-11: 13:30–20:00Z  (EDT 09:30–16:00)
-    - 2024-11-03: 14:30–21:00Z  (EST 09:30–16:00)
+    Raises
+    ------
+    AssertionError
+        If any of the invariants fail for the constructed example.
 
     Notes
     -----
-    - `calculate_minutes` will add `minutes_open` and `day_length_min` in place.
+    - Uses a small mixed set of fractions [0.0, 0.25, 0.5, 1.0] with a fixed
+      `daily_cap` to exercise both interior and edge behavior in one place.
+    - Random draws matter only for the 0.25 row (fractional intraday
+      expectation); the others have integer expectations and no fractional
+      remainder.
     """
-
-    return pd.DataFrame(
+    daily_cap = 10
+    df = pd.DataFrame(
         {
-            "trading_day": pd.to_datetime(
-                [
-                    "2024-03-10",  # Standard Time (EST)
-                    "2024-03-11",  # Daylight Time (EDT)
-                    "2024-11-03",  # Standard Time (EST)
-                ]
-            ),
-            "session_open_utc": pd.to_datetime(
-                [
-                    "2024-03-10 14:30:00+00:00",
-                    "2024-03-11 13:30:00+00:00",
-                    "2024-11-03 14:30:00+00:00",
-                ]
-            ),
-            "session_close_utc": pd.to_datetime(
-                [
-                    "2024-03-10 21:00:00+00:00",
-                    "2024-03-11 20:00:00+00:00",
-                    "2024-11-03 21:00:00+00:00",
-                ]
-            ),
-        }
-    ).set_index("trading_day")
+            "overnight_fraction": [0.0, 0.25, 0.5, 1.0],
+        },
+        index=pd.date_range("2024-01-01", periods=4),
+    )
+
+    # Chosen so that only the 0.25 row has a non-trivial Bernoulli decision.
+    rng = cast(np.random.Generator, DummyRNG([0.42, 0.9, 0.1, 0.7]))
+
+    result = quota.compute_daily_caps(daily_cap, df, rng)
+
+    # Invariants: integer caps and per-row sum = daily_cap.
+    assert pd.api.types.is_integer_dtype(result["intraday_cap"])
+    assert pd.api.types.is_integer_dtype(result["overnight_cap"])
+    assert (result["intraday_cap"] + result["overnight_cap"] == daily_cap).all()
+
+    # overnight_fraction == 0.0 → full intraday.
+    assert result.loc["2024-01-01", "intraday_cap"] == daily_cap
+    assert result.loc["2024-01-01", "overnight_cap"] == 0
+
+    # overnight_fraction == 1.0 → full overnight.
+    assert result.loc["2024-01-04", "intraday_cap"] == 0
+    assert result.loc["2024-01-04", "overnight_cap"] == daily_cap
+
+
+def test_compute_daily_caps_randomized_rounding_matches_floor_plus_bernoulli() -> None:
+    """
+    Verify that randomized rounding follows floor + Bernoulli(fractional part).
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+        The test passes if, for a fixed `overnight_fraction` and `daily_cap`,
+        the resulting `intraday_cap` values:
+            - equal either `floor(intraday_expected)` or
+              `floor(intraday_expected) + 1` for each row, and
+            - match the expected Bernoulli outcomes given a deterministic sequence
+              of uniforms supplied by `DummyRNG`.
+
+    Raises
+    ------
+    AssertionError
+        If any intraday cap falls outside the allowed two-point support or
+        disagrees with the Bernoulli comparison against the dummy draws.
+
+    Notes
+    -----
+    - Uses `overnight_fraction = 0.25` and `daily_cap = 5`, so
+      `intraday_expected = 3.75`, floor = 3, fractional = 0.75.
+    - Chooses dummy uniforms `[0.0, 0.5, 0.74, 0.75]`, so the first three rows
+      should round up to 4, and the last row should remain at 3.
+    """
+    daily_cap = 5
+    df = pd.DataFrame(
+        {"overnight_fraction": [0.25, 0.25, 0.25, 0.25]},
+        index=pd.date_range("2024-03-01", periods=4),
+    )
+    rng = cast(np.random.Generator, DummyRNG([0.0, 0.5, 0.74, 0.75]))
+
+    result = quota.compute_daily_caps(daily_cap, df, rng)
+
+    intraday_expected = daily_cap * (1.0 - 0.25)  # 3.75
+    floor_val = int(np.floor(intraday_expected))
+
+    expected_intraday = pd.Series(
+        [floor_val + 1, floor_val + 1, floor_val + 1, floor_val],
+        index=result.index,
+    )
+
+    assert result["intraday_cap"].equals(expected_intraday)
+    assert (result["overnight_cap"] == daily_cap - expected_intraday).all()
+    assert (result["intraday_cap"] + result["overnight_cap"] == daily_cap).all()
+
+
+def test_compute_daily_caps_mutates_and_returns_same_dataframe() -> None:
+    """
+    Ensure `compute_daily_caps` mutates the input DataFrame and returns it.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+        The test passes if:
+            - The object identity of the returned DataFrame matches the input.
+            - The new columns `intraday_cap` and `overnight_cap` exist on the
+              original frame after the call.
+
+    Raises
+    ------
+    AssertionError
+        If a new DataFrame object is allocated or required columns are missing.
+
+    Notes
+    -----
+    - This test documents the in-place mutation contract so that callers can
+      rely on shared references to the same DataFrame being updated.
+    """
+    df = pd.DataFrame(
+        {"overnight_fraction": [0.1, 0.9]},
+        index=pd.date_range("2024-04-01", periods=2),
+    )
+    rng = cast(np.random.Generator, DummyRNG([0.3, 0.7]))
+
+    result = quota.compute_daily_caps(10, df, rng)
+
+    assert result is df
+    assert "intraday_cap" in df.columns
+    assert "overnight_cap" in df.columns
