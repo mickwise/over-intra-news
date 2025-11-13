@@ -127,7 +127,7 @@ def extract_cli_args() -> tuple[str, int, str]:
     bucket: str = sys.argv[1]
     daily_cap: int = int(sys.argv[2])
     logger_level: str = "INFO"
-    if len (sys.argv) == 4:
+    if len(sys.argv) == 4:
         logger_level = sys.argv[3]
     return bucket, daily_cap, logger_level
 
