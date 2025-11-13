@@ -44,7 +44,80 @@ from aws.ccnews_sampler import uniform_sampling
 from infra.logging.infra_logger import InfraLogger
 
 
-def test_extract_cli_args_parses_bucket_and_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+@dataclass
+class _DummyLogger:
+    """
+    Purpose
+    -------
+    Minimal logger stub that records `.info(...)` and `.debug(...)` calls.
+
+    Key behaviors
+    -------------
+    - Appends each info/debug message and its context dictionary to an internal
+      list so tests can assert on log usage.
+    - Mirrors the subset of the `InfraLogger` interface that
+      `uniform_sampling` relies on.
+
+    Parameters
+    ----------
+    infos : list[tuple[str, dict[str, Any]]] or None
+        Optional initial list of info log entries; normally left as None and
+        initialized to an empty list in `__post_init__`.
+    debugs : list[tuple[str, dict[str, Any]]] or None
+        Optional initial list of debug log entries; normally left as None and
+        initialized to an empty list in `__post_init__`.
+
+    Attributes
+    ----------
+    infos : list[tuple[str, dict[str, Any]]]
+        Collected `(message, context)` pairs for `.info(...)` calls.
+    debugs : list[tuple[str, dict[str, Any]]]
+        Collected `(message, context)` pairs for `.debug(...)` calls.
+
+    Notes
+    -----
+    - This stub deliberately ignores log levels, formatting, and sinks; tests
+      only care that log calls happen with the expected context.
+    - The type annotations use `Any` for context values to match the production
+      logger’s flexibility.
+    """
+
+    infos: List[Tuple[str, Dict[str, Any]]] = None  # type: ignore[assignment]
+    debugs: List[Tuple[str, Dict[str, Any]]] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        self.infos = []
+        self.debugs = []
+
+    def info(self, msg: str, context: Dict[str, Any] | None = None) -> None:
+        self.infos.append((msg, context or {}))
+
+    def debug(self, msg: str, context: Dict[str, Any] | None = None) -> None:
+        self.debugs.append((msg, context or {}))
+
+
+@dataclass
+class _DummyRunData:
+    bucket: str
+    key: str
+    year: str
+    month: str
+    daily_cap: int
+    nyse_cal: pd.DataFrame
+    logger: Any
+    rng: np.random.Generator
+    spillover_in: Dict[str, List[str]]
+    spillover_out: Dict[str, List[str]]
+
+
+@pytest.mark.parametrize(
+    ["logger_level", "expected_logger_level"], [("DEBUG", "DEBUG"), (None, "INFO")]
+)
+def test_extract_cli_args_parses_bucket_and_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    logger_level: str | None,
+    expected_logger_level: str,
+) -> None:
     """
     Verify that `extract_cli_args` reads bucket and daily cap from `sys.argv`.
 
@@ -53,6 +126,12 @@ def test_extract_cli_args_parses_bucket_and_cap(monkeypatch: pytest.MonkeyPatch)
     monkeypatch : pytest.MonkeyPatch
         Fixture used to replace `uniform_sampling.sys` with a controlled
         argv namespace.
+    logger_level : str | None
+        Optional logger level to inject into `argv`; if `None`, only bucket and
+        cap are provided.
+    expected_logger_level : str
+        Expected logger level returned by `extract_cli_args`, based on the
+        injected `logger_level`.
 
     Returns
     -------
@@ -61,7 +140,9 @@ def test_extract_cli_args_parses_bucket_and_cap(monkeypatch: pytest.MonkeyPatch)
     Raises
     ------
     AssertionError
-        If the parsed bucket or cap do not match the injected `argv` values.
+        If the parsed bucket or cap do not match the injected `argv` values
+        or if the logger level does not match expectations.
+
 
     Notes
     -----
@@ -72,13 +153,20 @@ def test_extract_cli_args_parses_bucket_and_cap(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         uniform_sampling,
         "sys",
-        SimpleNamespace(argv=["prog", "my-bucket", "25"]),
+        SimpleNamespace(
+            argv=(
+                ["prog", "my-bucket", "25", logger_level]
+                if logger_level
+                else ["prog", "my-bucket", "25"]
+            )
+        ),
     )
 
-    bucket, daily_cap = uniform_sampling.extract_cli_args()
+    bucket, daily_cap, logger_level_result = uniform_sampling.extract_cli_args()
 
     assert bucket == "my-bucket"
     assert daily_cap == 25
+    assert logger_level_result == expected_logger_level
 
 
 def test_extract_warc_path_dict_lists_objects_and_groups_by_year_month(
@@ -152,72 +240,6 @@ def test_extract_warc_path_dict_lists_objects_and_groups_by_year_month(
         ("2019", "02"): "2019/02/other.txt",
         ("2019", "03"): "2019/03/foo.txt",
     }
-
-
-@dataclass
-class _DummyLogger:
-    """
-    Purpose
-    -------
-    Minimal logger stub that records `.info(...)` and `.debug(...)` calls.
-
-    Key behaviors
-    -------------
-    - Appends each info/debug message and its context dictionary to an internal
-      list so tests can assert on log usage.
-    - Mirrors the subset of the `InfraLogger` interface that
-      `uniform_sampling` relies on.
-
-    Parameters
-    ----------
-    infos : list[tuple[str, dict[str, Any]]] or None
-        Optional initial list of info log entries; normally left as None and
-        initialized to an empty list in `__post_init__`.
-    debugs : list[tuple[str, dict[str, Any]]] or None
-        Optional initial list of debug log entries; normally left as None and
-        initialized to an empty list in `__post_init__`.
-
-    Attributes
-    ----------
-    infos : list[tuple[str, dict[str, Any]]]
-        Collected `(message, context)` pairs for `.info(...)` calls.
-    debugs : list[tuple[str, dict[str, Any]]]
-        Collected `(message, context)` pairs for `.debug(...)` calls.
-
-    Notes
-    -----
-    - This stub deliberately ignores log levels, formatting, and sinks; tests
-      only care that log calls happen with the expected context.
-    - The type annotations use `Any` for context values to match the production
-      logger’s flexibility.
-    """
-
-    infos: List[Tuple[str, Dict[str, Any]]] = None  # type: ignore[assignment]
-    debugs: List[Tuple[str, Dict[str, Any]]] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        self.infos = []
-        self.debugs = []
-
-    def info(self, msg: str, context: Dict[str, Any] | None = None) -> None:
-        self.infos.append((msg, context or {}))
-
-    def debug(self, msg: str, context: Dict[str, Any] | None = None) -> None:
-        self.debugs.append((msg, context or {}))
-
-
-@dataclass
-class _DummyRunData:
-    bucket: str
-    key: str
-    year: str
-    month: str
-    daily_cap: int
-    nyse_cal: pd.DataFrame
-    logger: Any
-    rng: np.random.Generator
-    spillover_in: Dict[str, List[str]]
-    spillover_out: Dict[str, List[str]]
 
 
 def test_run_month_loop_orders_months_and_threads_spillover(
