@@ -46,6 +46,7 @@ This module does not perform any Wayback fallback itself; it assumes that
 Wayback-derived candidate CIKs already exist in `wayback_candidates`.
 """
 
+from typing import List
 import pandas as pd
 import requests
 
@@ -174,7 +175,7 @@ def extract_wayback_candidates() -> CandidateDict:
     with connect_to_db() as conn:
         with conn.cursor() as cursor:
             cursor.execute(query)
-            rows = cursor.fetchall()
+            rows: List[tuple] = cursor.fetchall()
             candidates: CandidateDict = {}
             for row in rows:
                 ticker: str = row[0]
