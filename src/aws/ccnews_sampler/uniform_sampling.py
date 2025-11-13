@@ -77,9 +77,12 @@ def main() -> None:
       directly from other code.
     """
 
-    logger: InfraLogger = initialize_logger("ccnews_sampler.uniform_sampling")
-
-    bucket, daily_cap = extract_cli_args()
+    bucket, daily_cap, logger_level = extract_cli_args()
+    logger: InfraLogger = initialize_logger(
+        component_name="ccnews_sampler.uniform_sampling",
+        level=logger_level,
+        run_meta={"bucket": bucket, "daily_cap": daily_cap},
+    )
     warc_path_dict: dict[YearMonth, str] = extract_warc_path_dict(bucket)
     samples_dict: SamplingDict = run_month_loop(
         logger,
@@ -90,7 +93,7 @@ def main() -> None:
     write_samples_to_s3(bucket, logger, samples_dict)
 
 
-def extract_cli_args() -> tuple[str, int]:
+def extract_cli_args() -> tuple[str, int, str]:
     """
     Parse and return the bucket name and daily sampling cap from CLI arguments.
 
@@ -100,10 +103,11 @@ def extract_cli_args() -> tuple[str, int]:
 
     Returns
     -------
-    tuple[str, int]
+    tuple[str, int, str]
         A `(bucket, daily_cap)` tuple where:
         - `bucket` is the S3 bucket name.
         - `daily_cap` is the per-day total sample cap as an integer.
+        - `logger_level` is the desired logging level as a string (set to INFO if None).
 
     Raises
     ------
@@ -122,7 +126,10 @@ def extract_cli_args() -> tuple[str, int]:
 
     bucket: str = sys.argv[1]
     daily_cap: int = int(sys.argv[2])
-    return bucket, daily_cap
+    logger_level: str = "INFO"
+    if len (sys.argv) == 4:
+        logger_level = sys.argv[3]
+    return bucket, daily_cap, logger_level
 
 
 def extract_warc_path_dict(bucket: str) -> dict[YearMonth, str]:
