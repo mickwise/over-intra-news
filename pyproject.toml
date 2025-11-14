@@ -45,7 +45,7 @@ mypy_path = "src"
 files = ["src/infra", "src/aws/ccnews_sampler", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["exchange_calendars.*"]
+module = ["exchange_calendars.*", "warcio.*", "langdetect.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
