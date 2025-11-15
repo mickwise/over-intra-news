@@ -271,8 +271,8 @@ def test_extract_link_date_parses_timestamp_and_trading_key() -> None:
     """
 
     # Example WARC path embedding 2024-01-02 15:30:00 UTC.
-    line = "s3://cc-news/CC-NEWS-20240102-153000-000000-foo.warc.gz"
-    date_pattern = re.compile(r"CC-NEWS-(20240102)-(153000)")
+    line = "s3://cc-news/CC-NEWS-20240102153000-000000-foo.warc.gz"
+    date_pattern = re.compile(r"CC-NEWS-(20240102)(153000)")
 
     parsed = extract_sample.extract_link_date(line, date_pattern)
     assert parsed is not None
@@ -306,7 +306,7 @@ def test_extract_link_date_returns_none_on_no_match() -> None:
     """
 
     line = "s3://cc-news/not-a-cc-news-line"
-    date_pattern = re.compile(r"CC-NEWS-(20240102)-(153000)")
+    date_pattern = re.compile(r"CC-NEWS-(20240102)(153000)")
     assert extract_sample.extract_link_date(line, date_pattern) is None
 
 
@@ -639,15 +639,13 @@ def test_fill_reservoirs_streams_s3_and_delegates(monkeypatch: pytest.MonkeyPatc
 
     # Stub S3 stream.
     class DummyBody:
-        def __enter__(self) -> "DummyBody":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
-            return None
-
         def iter_lines(self):
             yield b"GOOD-LINE"
             yield b"BAD-LINE"
+
+        def close(self) -> None:
+            # Match StreamingBody interface; no-op for tests.
+            pass
 
     class DummyS3Client:
         def get_object(self, Bucket: str, Key: str) -> Dict[str, Any]:

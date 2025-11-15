@@ -229,10 +229,10 @@ def fill_reservoirs(
     s3_client = boto3.client("s3")
     queue_stream = s3_client.get_object(Bucket=run_data.bucket, Key=run_data.key)["Body"]
     date_pattern: re.Pattern[str] = re.compile(
-        rf"CC-NEWS-({run_data.year}{run_data.month}\d{{2}})-(\d{{6}})"
+        rf"CC-NEWS-({run_data.year}{run_data.month}\d{{2}})(\d{{6}})"
     )
-    with queue_stream as stream:
-        for line in stream.iter_lines():
+    try:
+        for line in queue_stream.iter_lines():
             line = line.decode("utf-8")
             run_context["lines_total"] += 1
             parsed: tuple[pd.Timestamp, str] | None = extract_link_date(line, date_pattern)
@@ -255,6 +255,10 @@ def fill_reservoirs(
                         reservoir_manager,
                         run_data,
                     )
+    finally:
+        close: Any = getattr(queue_stream, "close", None)
+        if callable(close):
+            close()
 
 
 def extract_link_date(line: str, date_pattern: re.Pattern[str]) -> tuple[pd.Timestamp, str] | None:
