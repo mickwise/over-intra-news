@@ -107,14 +107,16 @@ check_bucket_access() {
 # Notes
 #   Rely on lifecycle rules to expire canaries if DeleteObject isn’t allowed.
 check_can_write_prefix() {
-	local bucket="$1" prefix="$2"
-	local canary_key
-	canary_key="${prefix}.__canary__.$(date +%s).$$"
-	aws s3api put-object --bucket "$bucket" --key "$canary_key" --body /dev/null >/dev/null 2>&1 || {
-		echo "no PutObject permission at s3://$bucket/$prefix"
-		return 1
-	}
-	echo "Note: wrote canary at s3://$bucket/$canary_key (will rely on lifecycle to expire it)" >&2
+    local bucket="$1" prefix="$2"
+    local canary_key
+    canary_key="${prefix}.__canary__.$(date +%s).$$"
+
+    if aws s3 cp /dev/null "s3://$bucket/${canary_key}" >/dev/null 2>&1; then
+        echo "Note: wrote canary at s3://$bucket/$canary_key (will rely on lifecycle to expire it)" >&2
+    else
+        echo "no PutObject permission at s3://$bucket/$prefix"
+        return 1
+    fi
 }
 
 # ------------------ Parsing ------------------
