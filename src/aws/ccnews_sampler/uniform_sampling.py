@@ -179,6 +179,8 @@ def extract_warc_path_dict(bucket: str) -> dict[YearMonth, str]:
         for obj in response.get("Contents", []):
             key: str = obj["Key"]
             split_key: List[str] = key.split("/")
+            if split_key[-1] != "warc_queue.txt":
+                continue
             year: str = split_key[0]
             month: str = split_key[1]
             warc_path_dict[(year, month)] = key
