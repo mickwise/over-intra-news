@@ -8,7 +8,7 @@ for firm-name matching.
 Key behaviors
 -------------
 - Derives `CPU_COUNT` from the host and computes `MAXIMAL_WORKER_COUNT`
-  as `min(CPU_COUNT - 2, 12)` to leave headroom for the OS and other
+  as `max(1, min(CPU_COUNT - 2, 12))` to leave headroom for the OS and other
   processes.
 - Enumerates `COMPRESSED_CONTENT_TYPES` to decide when HTTP payloads
   should be transparently decompressed.
@@ -40,7 +40,7 @@ import os
 from typing import List
 
 CPU_COUNT: int = os.cpu_count() or 8
-MAXIMAL_WORKER_COUNT: int = min(CPU_COUNT - 2, 12)
+MAXIMAL_WORKER_COUNT: int = max(1, min(CPU_COUNT - 2, 12))
 COMPRESSED_CONTENT_TYPES: set[str] = {"gzip", "x-gzip", "deflate"}
 NON_VISIBLE_TAGS: List[str] = [
     "style",
