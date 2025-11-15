@@ -190,7 +190,8 @@ def test_extract_warc_path_dict_lists_objects_and_groups_by_year_month(
     ------
     AssertionError
         If pagination is not respected or the resulting mapping does not contain
-        the expected `(year, month) -> key` pairs.
+        the expected `(year, month) -> key` pair. Or if pairs with ending different
+        from "warc_queue.txt" are included in the result.
 
     Notes
     -----
@@ -234,11 +235,9 @@ def test_extract_warc_path_dict_lists_objects_and_groups_by_year_month(
 
     result = uniform_sampling.extract_warc_path_dict("ignored-bucket")
 
-    # We should have entries for all three (year, month) pairs.
+    # We should have entries only for the first object in each (year, month).
     assert result == {
         ("2019", "01"): "2019/01/warc_queue.txt",
-        ("2019", "02"): "2019/02/other.txt",
-        ("2019", "03"): "2019/03/foo.txt",
     }
 
 
