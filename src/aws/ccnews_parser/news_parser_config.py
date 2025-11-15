@@ -14,8 +14,6 @@ Key behaviors
   should be transparently decompressed.
 - Lists `NON_VISIBLE_TAGS` that are stripped from HTML before visible
   text extraction (e.g., `<script>`, `<style>`, `<head>`).
-- Defines `NAME_SUFFIXES_SET` of common corporate suffixes that are
-  removed when canonicalizing firm names for matching.
 
 Conventions
 -----------
@@ -23,7 +21,7 @@ Conventions
   avoid degenerate zero-worker configurations.
 - `MAXIMAL_WORKER_COUNT` is capped at 12 and always at least two fewer
   than `CPU_COUNT` to balance throughput with system stability.
-- All tag and suffix sets are uppercase to align with upstream text
+- The tag set is uppercase to align with upstream text
   normalization, which converts tokens to uppercase ASCII.
 - Constants are treated as read-only; callers should not mutate them
   at runtime.
@@ -51,30 +49,3 @@ NON_VISIBLE_TAGS: List[str] = [
     "link",
     "svg",
 ]
-NAME_SUFFIXES_SET: set[str] = {
-    "INC",
-    "INCDE",
-    "INCMD",
-    "INCORPORATED",
-    "CORP",
-    "CORPORATION",
-    "INTERNATIONAL",
-    "GROUP",
-    "CO",
-    "COMPANY",
-    "LLC",
-    "LP",
-    "L.P.",
-    "LLLP",
-    "LLP",
-    "LTD",
-    "LIMITED",
-    "HOLDINGS",
-    "HLDGS",
-    "HOLDING",
-    "PLC",
-    "DE",
-    "MD",
-    "UT",
-    "MO",
-}

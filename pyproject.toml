@@ -20,7 +20,9 @@ dependencies = [
   "lxml",
   "sqlalchemy",
   "warcio",
-  "langdetect"
+  "langdetect",
+  "pyarrow",
+  "s3fs",
 ]
 
 [project.optional-dependencies]

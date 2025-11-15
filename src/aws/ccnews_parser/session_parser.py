@@ -40,7 +40,6 @@ from warcio import ArchiveIterator
 
 from aws.ccnews_parser.news_parser_config import (
     COMPRESSED_CONTENT_TYPES,
-    NAME_SUFFIXES_SET,
     NON_VISIBLE_TAGS,
 )
 from aws.ccnews_parser.news_parser_utils import (
@@ -422,7 +421,6 @@ def detect_firms(words: list[str], run_data: RunData) -> set[str]:
     name_dict: dict[str, set[str]] = {}
     for firm_info in run_data.firm_info_dict.values():
         parts = {word_canonicalizer(part) for part in firm_info.firm_name.split()}
-        parts = parts - NAME_SUFFIXES_SET - {""}
         if parts:
             name_dict[firm_info.cik] = parts
     matched_firms_by_name: set[str] = set()

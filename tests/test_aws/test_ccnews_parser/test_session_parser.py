@@ -23,9 +23,9 @@ Key behaviors
   - removes non-ASCII characters, and
   - returns None when HTML parsing fails.
 - Check that `detect_firms`:
-  - canonicalizes article words via `word_canonicalizer`,
-  - removes corporate suffixes via `NAME_SUFFIXES_SET`, and
-  - returns CIKs whose stripped name tokens are all present in the article.
+  - canonicalizes article words via `word_canonicalizer`, and
+  - returns CIKs whose canonicalized firm-name tokens (including suffixes)
+    are all present in the article.
 
 Conventions
 -----------
@@ -609,7 +609,7 @@ def test_extract_data_from_record_returns_article_when_all_gates_pass(
       the firm-matching logic and the English-only language filter.
     """
 
-    visible_text = ("ACME REPORTS STRONG EARNINGS " * 10).strip()
+    visible_text = ("ACME HOLDINGS INC REPORTS STRONG EARNINGS " * 10).strip()
 
     def fake_convert_to_visible_ascii(html_text: str) -> str | None:
         return visible_text
@@ -844,10 +844,9 @@ def test_convert_to_visible_ascii_returns_none_on_parse_error(
     assert result is None
 
 
-def test_detect_firms_matches_by_cik_and_strips_suffixes() -> None:
+def test_detect_firms_matches_when_all_name_tokens_present() -> None:
     """
-    Check that `detect_firms` matches firms by canonicalized name tokens and
-    ignores corporate suffixes defined in `NAME_SUFFIXES_SET`.
+    Check that `detect_firms` matches firms by canonicalized name tokens.
 
     Parameters
     ----------
@@ -857,8 +856,8 @@ def test_detect_firms_matches_by_cik_and_strips_suffixes() -> None:
     -------
     None
         The test passes if the function returns only the CIK for the firm
-        whose non-suffix name tokens all appear in the article words, and
-        excludes firms that do not meet this criterion.
+        name tokens all appear in the article words, and excludes firms that do not
+        meet this criterion.
 
     Raises
     ------
@@ -868,12 +867,12 @@ def test_detect_firms_matches_by_cik_and_strips_suffixes() -> None:
 
     Notes
     -----
-    - Exercises canonicalization, suffix stripping, and subset matching by
+    - Exercises canonicalization and subset matching by
       constructing a small firm universe where only one firm's stripped
       name tokens (`ACME HOLDINGS`) are present in the article word list.
     """
 
-    words = ["Acme", "Holdings", "reports", "strong", "profits"]
+    words = ["Acme", "Holdings", "Inc", "reports", "strong", "profits"]
     dummy_logger = _DummyLogger()
     firm_info_dict = {
         "0001": FirmInfo(cik="0001", firm_name="ACME HOLDINGS INC"),
