@@ -39,7 +39,10 @@ from lxml import html
 from warcio import ArchiveIterator
 
 from aws.ccnews_parser.news_parser_config import (
+    ARTICLE_BODY_XPATHS,
+    ARTICLE_ROOT_XPATHS,
     COMPRESSED_CONTENT_TYPES,
+    NAME_SUFFIXES_SET,
     NON_VISIBLE_TAGS,
 )
 from aws.ccnews_parser.news_parser_utils import (
@@ -251,8 +254,6 @@ def extract_data_from_record(
         return None
     words: list[str] = visible_text.split()
     word_count: int = len(words)
-    if word_count < 25:
-        return None
     sample_metadata.ge_25_words += 1
     try:
         detected_language: str = langdetect.detect(visible_text)
@@ -322,7 +323,7 @@ def to_text(record: Any, http_content_type: str, http_content_encoding: str) -> 
     """
 
     raw_stream: Any
-    if http_content_encoding in COMPRESSED_CONTENT_TYPES:
+    if http_content_encoding.lower() in COMPRESSED_CONTENT_TYPES:
         raw_stream = gzip.GzipFile(fileobj=record.content_stream())
     else:
         raw_stream = record.content_stream()
@@ -340,7 +341,8 @@ def to_text(record: Any, http_content_type: str, http_content_encoding: str) -> 
 
 def convert_to_visible_ascii(html_text: str) -> str | None:
     """
-    Strip non-visible HTML content and normalize text to uppercase ASCII.
+    Strip non-visible HTML content, locate an article-like subtree, and normalize
+    its text to uppercase ASCII.
 
     Parameters
     ----------
@@ -351,8 +353,9 @@ def convert_to_visible_ascii(html_text: str) -> str | None:
     Returns
     -------
     str | None
-        Uppercase ASCII text with HTML tags removed and whitespace collapsed
-        on success; `None` if the HTML cannot be parsed.
+        Uppercase ASCII text for the best-effort article body with whitespace
+        collapsed on success; `None` if the HTML cannot be parsed or no
+        sufficiently long article-like region is found.
 
     Raises
     ------
@@ -361,25 +364,88 @@ def convert_to_visible_ascii(html_text: str) -> str | None:
 
     Notes
     -----
-    - Elements with tags listed in `NON_VISIBLE_TAGS` (e.g., ``<script>``,
-      ``<style>``, ``<head>``) are removed before extracting text.
-    - All whitespace is normalized to single spaces and non-ASCII characters
-      are dropped via ASCII encoding with ``errors="ignore"``.
-    - A failed parse (e.g., due to severely malformed HTML) returns `None`
-      so that callers can treat the record as filtered rather than fatal.
+    - The function first parses the HTML into a tree and scans
+      `ARTICLE_ROOT_XPATHS` in order to find candidate article roots
+      (e.g., ``<article>``, main content containers, or common CMS IDs/classes).
+    - For each XPath that yields elements, the longest element by
+      ``len(el.text_content())`` is chosen as the root candidate.
+    - Within this root candidate, the function iterates over
+      `ARTICLE_BODY_XPATHS` to search for more specific article-body
+      containers (e.g., elements with ``itemprop="articleBody"`` or
+      body-like classes). For each body XPath, the longest matching
+      element is passed to `extract_text_from_element`.
+    - If any body element produces non-empty text from
+      `extract_text_from_element`, that text is returned immediately.
+    - Non-visible tags listed in `NON_VISIBLE_TAGS` are stripped inside
+      `extract_text_from_element`; this function is concerned only with
+      structural selection of the most article-like subtree.
     """
 
     try:
         html_tree: Any = html.fromstring(html_text)
-        for tag in NON_VISIBLE_TAGS:
-            for element in html_tree.findall(f".//{tag}"):
-                element.drop_tree()
-        visible_text: str = " ".join(html_tree.itertext())
-        visible_text = " ".join(visible_text.split())
-        ascii_bytes: bytes = visible_text.encode("ascii", errors="ignore")
-        return ascii_bytes.decode("ascii", errors="ignore").upper()
+        for xpath in ARTICLE_ROOT_XPATHS:
+            elements: Any = html_tree.xpath(xpath)
+            if elements:
+                max_length_element: Any = max(elements, key=lambda el: len(el.text_content() or ""))
+                for body_xpath in ARTICLE_BODY_XPATHS:
+                    body_elements: Any = max_length_element.xpath(body_xpath)
+                    if body_elements:
+                        max_length_element = max(
+                            body_elements, key=lambda el: len(el.text_content() or "")
+                        )
+                        extracted_text: str = extract_text_from_element(max_length_element)
+                        if extracted_text:
+                            return extracted_text
     except (ValueError, TypeError, html.etree.XMLSyntaxError):
         return None
+    return None
+
+
+def extract_text_from_element(element: Any) -> str:
+    """
+    Extract visible text from an HTML subtree and normalize it to uppercase ASCII.
+
+    Parameters
+    ----------
+    element : Any
+        Root HTML element from which to extract visible text. This is
+        a node selected via `ARTICLE_ROOT_XPATHS` and then `ARTICLE_BODY_XPATHS`.
+
+    Returns
+    -------
+    str
+        Uppercase ASCII text with HTML tags removed and whitespace collapsed when
+        the element contains at least 25 whitespace-separated tokens; an empty
+        string otherwise, indicating that the subtree is too short to be treated
+        as an article body.
+
+    Raises
+    ------
+    None
+        Parsing operations on the already-constructed element are not expected to
+        raise; failures are represented by returning an empty string.
+
+    Notes
+    -----
+    - All descendants whose tags are listed in `NON_VISIBLE_TAGS` (e.g.,
+      ``<script>``, ``<style>``, ``<head>``) are removed before text extraction.
+    - Text is obtained via ``element.text_content()``, whitespace is collapsed
+      to single spaces, and non-ASCII characters are dropped via ASCII encoding
+      with ``errors="ignore"``.
+    - The minimum-length check (25 tokens) is applied here so that callers like
+      `convert_to_visible_ascii` can treat short matches as failures and continue
+      searching other XPath candidates.
+    """
+
+    for tag in NON_VISIBLE_TAGS:
+        for elem in element.findall(f".//{tag}"):
+            elem.drop_tree()
+    raw_text: str = element.text_content()
+    normalized_text: str = " ".join(raw_text.split())
+    ascii_text: str = normalized_text.encode("ascii", errors="ignore").decode("ascii")
+    if len(normalized_text.split()) < 25:
+        return ""
+    return ascii_text.upper()
 
 
 def detect_firms(words: list[str], run_data: RunData) -> set[str]:
@@ -398,8 +464,9 @@ def detect_firms(words: list[str], run_data: RunData) -> set[str]:
     Returns
     -------
     set[str]
-        Set of CIK strings for firms whose canonicalized name parts (minus
-        suffixes) are all present in the canonicalized word set.
+        Set of CIK strings for firms whose canonicalized name parts all
+        appear in the article word set and whose non-suffix name tokens
+        each occur at least twice.
 
     Raises
     ------
@@ -411,13 +478,22 @@ def detect_firms(words: list[str], run_data: RunData) -> set[str]:
     -----
     - Words and firm-name parts are canonicalized by `word_canonicalizer`
       (alphanumeric-only, uppercased) and empty tokens are discarded.
-    - Common corporate suffixes (e.g., ``"INC"``, ``"CORP"``, ``"LLC"``)
-      are removed using `NAME_SUFFIXES_SET` before matching.
-    - A firm is considered matched when its remaining name parts form a
-      subset of the article's canonicalized word set.
+    - Firm-name tokens (including common suffixes such as ``"INC"``,
+      ``"CORP"``, ``"LLC"``) must all be present in the canonicalized
+      article word set for a firm to be considered a candidate match.
+    - Common corporate suffixes are listed in `NAME_SUFFIXES_SET`. After
+      the initial presence check, these suffix tokens are removed and the
+      remaining name parts must each appear at least twice in the article
+      for the match to be accepted.
+    - This frequency guard helps avoid spurious matches on very short
+      mentions or noisy contexts, trading some recall for higher precision.
     """
 
-    word_set: set[str] = {word_canonicalizer(word) for word in words} - {""}
+    word_frequency_dict: dict[str, int] = {}
+    for word in words:
+        canonical_word: str = word_canonicalizer(word)
+        if canonical_word:
+            word_frequency_dict[canonical_word] = word_frequency_dict.get(canonical_word, 0) + 1
     name_dict: dict[str, set[str]] = {}
     for firm_info in run_data.firm_info_dict.values():
         parts = {word_canonicalizer(part) for part in firm_info.firm_name.split()}
@@ -425,6 +501,11 @@ def detect_firms(words: list[str], run_data: RunData) -> set[str]:
             name_dict[firm_info.cik] = parts
     matched_firms_by_name: set[str] = set()
     for cik, name_parts in name_dict.items():
-        if name_parts.issubset(word_set):
-            matched_firms_by_name.add(cik)
+        if name_parts.issubset(word_frequency_dict.keys()):
+            name_parts_no_suffixes: set[str] = name_parts - NAME_SUFFIXES_SET
+            appearance_count_no_suffixes: int = min(
+                word_frequency_dict[part] for part in name_parts_no_suffixes
+            )
+            if appearance_count_no_suffixes > 1:
+                matched_firms_by_name.add(cik)
     return matched_firms_by_name

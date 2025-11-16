@@ -760,7 +760,7 @@ def test_to_text_falls_back_when_replacement_char_present() -> None:
 def test_convert_to_visible_ascii_strips_non_visible_and_uppercases() -> None:
     """
     Verify that `convert_to_visible_ascii` removes non-visible HTML sections
-    and returns normalized uppercase ASCII text.
+    and returns normalized uppercase ASCII text for an article-like subtree.
 
     Parameters
     ----------
@@ -771,7 +771,7 @@ def test_convert_to_visible_ascii_strips_non_visible_and_uppercases() -> None:
     None
         The test passes if content inside non-visible tags (head, style,
         script, etc.) is removed, whitespace is collapsed, and the remaining
-        visible text is returned as uppercase ASCII.
+        visible article body text is returned as uppercase ASCII.
 
     Raises
     ------
@@ -782,9 +782,11 @@ def test_convert_to_visible_ascii_strips_non_visible_and_uppercases() -> None:
 
     Notes
     -----
-    - Constructs a small HTML snippet with head/style/script blocks and
-      visible body text to exercise tag stripping, whitespace normalization,
-      and ASCII-only encoding behavior.
+    - Constructs a small HTML snippet with a semantic `<article>` root and
+      nested body content so that `ARTICLE_ROOT_XPATHS` and
+      `ARTICLE_BODY_XPATHS` both match.
+    - Includes `head/style/script` blocks to exercise tag stripping,
+      whitespace normalization, and ASCII-only encoding behavior.
     """
 
     html_text = """
@@ -792,15 +794,37 @@ def test_convert_to_visible_ascii_strips_non_visible_and_uppercases() -> None:
       <head>
         <title>Ignored</title>
         <style>.cls { color: red; }</style>
+        <script>headScript()</script>
       </head>
       <body>
-        Hello <script>bad()</script> World!
+        <article>
+          <div class="article-body">
+            Hello world this is an example article text repeated many times
+            to ensure we cross the twenty five word threshold hello world
+            this is an example article text repeated many times to ensure
+            we cross the twenty five word threshold
+            <script>bad()</script>
+          </div>
+        </article>
       </body>
     </html>
     """
 
     result = sp.convert_to_visible_ascii(html_text)
-    assert result == "HELLO WORLD!"
+    assert result is not None
+
+    # Script/style/title content should be stripped.
+    assert "bad()" not in result
+    assert "headScript()" not in result
+    assert "Ignored" not in result
+
+    # Text should be uppercased and reasonably collapsed.
+    assert result == result.upper()
+    assert "  " not in result
+
+    # Core visible words should still be present.
+    assert "HELLO WORLD" in result
+    assert len(result.split()) >= 25
 
 
 def test_convert_to_visible_ascii_returns_none_on_parse_error(
@@ -846,7 +870,9 @@ def test_convert_to_visible_ascii_returns_none_on_parse_error(
 
 def test_detect_firms_matches_when_all_name_tokens_present() -> None:
     """
-    Check that `detect_firms` matches firms by canonicalized name tokens.
+    Check that `detect_firms` matches firms by canonicalized name tokens
+    when all tokens are present and non-suffix tokens appear with sufficient
+    frequency.
 
     Parameters
     ----------
@@ -856,8 +882,9 @@ def test_detect_firms_matches_when_all_name_tokens_present() -> None:
     -------
     None
         The test passes if the function returns only the CIK for the firm
-        name tokens all appear in the article words, and excludes firms that do not
-        meet this criterion.
+        whose canonicalized name tokens all appear in the article words and
+        whose non-suffix tokens occur at least twice, while excluding firms
+        that do not meet this criterion.
 
     Raises
     ------
@@ -867,12 +894,22 @@ def test_detect_firms_matches_when_all_name_tokens_present() -> None:
 
     Notes
     -----
-    - Exercises canonicalization and subset matching by
-      constructing a small firm universe where only one firm's stripped
-      name tokens (`ACME HOLDINGS`) are present in the article word list.
+    - Exercises canonicalization and subset matching by constructing a small
+      firm universe where only one firm's stripped name tokens
+      (`ACME HOLDINGS`) are present in the article word list, and the
+      non-suffix token (`ACME`) appears at least twice to satisfy the
+      frequency guard in `detect_firms`.
     """
 
-    words = ["Acme", "Holdings", "Inc", "reports", "strong", "profits"]
+    words = [
+        "Acme",
+        "Holdings",
+        "Inc",
+        "Acme",
+        "reports",
+        "strong",
+        "profits",
+    ]
     dummy_logger = _DummyLogger()
     firm_info_dict = {
         "0001": FirmInfo(cik="0001", firm_name="ACME HOLDINGS INC"),
