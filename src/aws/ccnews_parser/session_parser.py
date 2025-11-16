@@ -263,7 +263,10 @@ def extract_data_from_record(
         return None
     sample_metadata.english_count += int(detected_language == "en")
     name_set = detect_firms(words, run_data)
-    if len(name_set) > 3 or len(name_set) == 0:
+    if len(name_set) > 3:
+        sample_metadata.matched_any_firm += int(len(name_set) > 0)
+        return None
+    if len(name_set) == 0:
         return None
     sample_metadata.matched_any_firm += int(len(name_set) > 0)
     sample_metadata.articles_kept += 1
