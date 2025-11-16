@@ -384,6 +384,8 @@ def convert_to_visible_ascii(html_text: str) -> str | None:
       structural selection of the most article-like subtree.
     """
 
+    if not html_text.strip():
+        return None
     try:
         html_tree: Any = html.fromstring(html_text)
         for xpath in ARTICLE_ROOT_XPATHS:
@@ -399,7 +401,7 @@ def convert_to_visible_ascii(html_text: str) -> str | None:
                         extracted_text: str = extract_text_from_element(max_length_element)
                         if extracted_text:
                             return extracted_text
-    except (ValueError, TypeError, html.etree.XMLSyntaxError):
+    except (ValueError, TypeError, html.etree.XMLSyntaxError, html.etree.ParserError):
         return None
     return None
 
