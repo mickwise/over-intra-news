@@ -7,12 +7,15 @@ persist filtered article text plus per-sample scan statistics to S3.
 Key behaviors
 -------------
 - Parse CLI arguments (year, S3 bucket, optional log level) and initialize
-  structured logging.
+  structured logging for the orchestrator.
 - Fan out per-month parsing via a `ProcessPoolExecutor`, using the trading
-  calendar to enumerate business days.
-- For each (trading_day × session) pair, build `RunData`, invoke the
+  calendar to enumerate NYSE business days.
+- For each `(trading_day × session)` pair, build `RunData`, invoke the
   session parser, and write article- and sample-level outputs as Parquet
-  datasets partitioned by year/month/day/session in S3.
+  datasets partitioned by `year/month/day/session` in S3.
+- Deduplicate articles within a `(date, session)` slice by assigning a
+  deterministic content-based `article_id` and dropping duplicates before
+  writing.
 
 Conventions
 -----------
@@ -21,20 +24,24 @@ Conventions
 - S3 output layout is:
     - `ccnews_articles/year=YYYY/month=MM/day=DD/session=SESSION/`
     - `ccnews_sample_stats/year=YYYY/month=MM/day=DD/session=SESSION/`
-- When no WARC samples or no kept articles exist for a (day, session)
-  pair, the module logs a warning and skips writing Parquet for that slice
-  rather than raising.
+- When no WARC samples or no kept articles exist for a `(day, session)`
+  pair, the module logs a warning and skips writing the corresponding Parquet
+  dataset rather than raising.
+- Exceptions arising from individual `(day, session)` parse or write steps
+  are logged at error level and do not stop processing of other days or
+  sessions for the same year.
 
 Downstream usage
 ----------------
 Invoke this module as a script, e.g.
 `python -m aws.ccnews_parser.news_parser_orchestrator YEAR BUCKET [LOG_LEVEL]`.
 Other components should not import `main`; instead they may reuse the
-helpers (`run_month_parser`, `generate_run_data`, `samples_to_parquet`)
-for custom orchestration or testing.
+helpers (`run_month_parser`, `generate_run_data`, `samples_to_parquet`,
+`generate_article_id`) for custom orchestration or testing.
 """
 
 import datetime as dt
+import hashlib
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any, List
@@ -69,26 +76,26 @@ def main() -> None:
     Returns
     -------
     None
-        The function runs the orchestrator side-effectfully: it submits
-        per-month parsing tasks to a `ProcessPoolExecutor` and exits when all
-        work has completed or an unrecoverable error is raised.
+        Submits per-month parsing tasks to a `ProcessPoolExecutor` and exits
+        when all work has completed or an unrecoverable error is raised before
+        or during executor startup.
 
     Raises
     ------
     ValueError
         If the `year` CLI argument cannot be parsed into an integer.
-    botocore.exceptions.BotoCoreError
-        Propagated from downstream S3 operations if AWS access fails.
     Exception
-        Any unexpected exception from downstream helpers (trading calendar
-        queries, session parsing, or Parquet writes) is not caught here and
-        will cause the process to terminate.
+        Any unexpected exception from the trading-calendar query or logger
+        initialization that occurs before per-month workers are submitted.
 
     Notes
     -----
+    - Per-session parsing and Parquet writes run in child processes spawned by
+      the executor. Errors in those workers are handled and logged inside
+      `run_month_parser` and do not propagate back to `main`.
     - This function is intended to be called only from the `__main__` guard.
-    - Logging is initialized once at the top level; child processes created
-      by the executor reinitialize their own loggers in `run_month_parser`.
+    - Logging is initialized once at the top level; child processes reinitialize
+      their own loggers within `run_month_parser`.
     """
 
     load_dotenv()
@@ -158,45 +165,47 @@ def run_month_parser(
     Parameters
     ----------
     year : int
-        The calendar year being processed; used only for logging metadata.
+        Calendar year being processed; used only for logging metadata.
     month : int
-        The calendar month (1–12) within `year` whose trading days are being
+        Calendar month (1–12) within `year` whose trading days are being
         processed.
     trading_days : list[datetime.date]
         List of trading dates in this month, typically obtained from
         `extract_trading_calendar_slice`.
     bucket : str
-        Name of the S3 bucket holding input WARC sample manifests and
-        receiving output Parquet datasets.
+        Name of the S3 bucket holding input WARC sample manifests and receiving
+        output Parquet datasets.
     logger_level : str
-        Logging verbosity level (e.g., "INFO", "DEBUG") passed to
+        Logging verbosity level (e.g., `"INFO"`, `"DEBUG"`) passed to
         `initialize_logger` for the month-level logger.
 
     Returns
     -------
     None
-        Iterates over all `(date, session)` combinations, runs parsing for
-        each, and writes outputs to S3; returns after the month’s work is
-        complete.
+        Iterates over all `(date, session)` combinations, runs parsing for each,
+        and writes outputs to S3; returns after the month’s work is complete.
 
     Raises
     ------
     botocore.exceptions.BotoCoreError
-        If S3 interactions in `generate_run_data` or `samples_to_parquet`
-        fail.
+        If S3 interactions in `generate_run_data` or `samples_to_parquet` fail
+        in a way that is not caught locally.
     Exception
-        Any unhandled errors from `generate_run_data`, `parse_session`, or
-        `samples_to_parquet` are propagated to the caller.
+        Any unexpected error that occurs before the per-session try/except
+        blocks (for example, logger initialization) and is not handled within
+        this function.
 
     Notes
     -----
     - For each `date` in `trading_days`, both `"intraday"` and `"overnight"`
       sessions are processed in sequence.
-    - If `generate_run_data` returns `None` (no WARC samples for a session),
-      the function logs a warning and skips that session without failing the
-      entire month.
-    - This function is designed to be run in a separate process per month,
-      as scheduled by the top-level `main` executor.
+    - If `generate_run_data` returns `None` (no WARC samples for a session), the
+      function logs a warning and skips that session without failing the month.
+    - Exceptions raised by `parse_session` or `samples_to_parquet` for a given
+      `(date, session)` are caught, logged at error level, and cause only that
+      session to be skipped; subsequent sessions and days are still processed.
+    - This function is designed to be run in a separate process per month, as
+      scheduled by the top-level `main` executor.
     """
 
     logger: InfraLogger = initialize_logger(
@@ -213,8 +222,16 @@ def run_month_parser(
             logger.debug(
                 (f"Processing {len(run_data.samples)} WARC files" f"for {date} session {session}")
             )
-            samples_data: List[SampleData] = parse_session(run_data)
-            samples_to_parquet(samples_data, run_data)
+            try:
+                samples_data: List[SampleData] = parse_session(run_data)
+            except Exception as e:
+                logger.error(f"Error parsing session for {date} session {session}: {e}")
+                continue
+            try:
+                samples_to_parquet(samples_data, run_data)
+            except Exception as e:
+                logger.error(f"Error writing Parquet for {date} session {session}: {e}")
+                continue
 
 
 def generate_run_data(
@@ -364,25 +381,24 @@ def samples_to_parquet(samples_data: List[SampleData], run_data: RunData) -> Non
     Parameters
     ----------
     samples_data : list[SampleData]
-        Collection of `SampleData` objects for a single (date, session), each
-        bundling the articles and scan statistics for an individual WARC
-        sample.
+        Collection of `SampleData` objects for a single `(date, session)`, each
+        bundling the articles and scan statistics for an individual WARC sample.
     run_data : RunData
-        Execution context describing the current (date, session), including
+        Execution context describing the current `(date, session)`, including
         the target output bucket and logging handle.
 
     Returns
     -------
     None
-        The function writes two Parquet datasets to S3 (articles and sample
-        stats) when there is data to persist; if no articles are present, it
-        logs a warning and skips the article dataset.
+        Writes two Parquet datasets to S3 (articles and sample stats) when there
+        is data to persist; if no articles are present, logs a warning and skips
+        the article dataset.
 
     Raises
     ------
     OSError
-        If writing Parquet to the S3 path fails due to I/O or filesystem
-        issues (e.g., missing `s3fs` or permissions).
+        If writing Parquet to the S3 path fails due to I/O or filesystem issues
+        (e.g., missing `s3fs` or permissions).
     ValueError
         If the flattened article or metadata records cannot be coerced into a
         valid `pandas.DataFrame`.
@@ -390,17 +406,20 @@ def samples_to_parquet(samples_data: List[SampleData], run_data: RunData) -> Non
     Notes
     -----
     - Article rows are written to:
-        `s3://{run_data.bucket}/ccnews_articles/year=YYYY
-        /month=MM/day=DD/session=SESSION/articles.parquet`
+        `s3://{run_data.bucket}/ccnews_articles/year=YYYY/
+        month=MM/day=DD/session=SESSION/articles.parquet`
     - Sample metadata rows are written to:
-        `s3://{run_data.bucket}/ccnews_sample_stats/year=YYYY
-        /month=MM/day=DD/session=SESSION/sample_stats.parquet`
+        `s3://{run_data.bucket}/ccnews_sample_stats/year=YYYY/month=MM/
+        day=DD/session=SESSION/sample_stats.parquet`
+    - Articles are deduplicated within a `(date, session)` slice by computing a
+      deterministic `article_id` (via `generate_article_id(...)`) and dropping
+      duplicate rows on that key before writing.
     - The `articles` dataset is skipped entirely when no article records are
-      present, but the sample statistics dataset is still written if
-      `samples_data` is non-empty.
+      present after gating and deduplication, but the sample statistics dataset
+      is still written if `samples_data` is non-empty.
     - `SampleMetadata` fields are expanded into columns and augmented with
-      explicit `date` and `session` columns to make downstream partitioning
-      and querying easier.
+      explicit `date` and `session` columns to make downstream partitioning and
+      querying easier.
     """
 
     year: int = run_data.date.year
@@ -410,6 +429,8 @@ def samples_to_parquet(samples_data: List[SampleData], run_data: RunData) -> Non
     ]
     if articles:
         articles_df: pd.DataFrame = pd.DataFrame(articles)
+        articles_df["article_id"] = generate_article_id(articles_df)
+        articles_df = articles_df.drop_duplicates(subset=["article_id"])
         articles_key_prefix: str = (
             f"ccnews_articles/"
             f"year={year}/month={month:02d}/day="
@@ -447,6 +468,60 @@ def samples_to_parquet(samples_data: List[SampleData], run_data: RunData) -> Non
 
         run_data.logger.info(f"Writing {len(meta_df)} sample metadata rows to {meta_s3_path}")
         meta_df.to_parquet(meta_s3_path, index=False)
+
+
+def generate_article_id(article_df: pd.DataFrame) -> pd.Series:
+    """
+    Generate deterministic content-based article identifiers for a DataFrame.
+
+    Parameters
+    ----------
+    article_df : pandas.DataFrame
+        DataFrame containing article-level records for a single `(date, session)`
+        slice. It is expected to expose at least the columns
+        `ny_date`, `session`, `url`, `cik_list`, and `full_text`.
+
+    Returns
+    -------
+    pandas.Series
+        A Series of SHA-1 hexadecimal strings, one per row of `article_df`,
+        suitable for use as a stable `article_id` column.
+
+    Raises
+    ------
+    KeyError
+        If any of the required columns (`ny_date`, `session`, `url`,
+        `cik_list`, `full_text`) are missing from `article_df`.
+    TypeError
+        If `cik_list` values cannot be iterated and string-joined (e.g., are not
+        list-like).
+
+    Notes
+    -----
+    - The identifier for each row is computed by concatenating
+      `ny_date`, `session`, `url`, a comma-separated and sorted `cik_list`,
+      and `full_text` with `"|"` separators, and then hashing the resulting
+      key with SHA-1.
+    - Using a content-based identifier allows deterministic deduplication of
+      articles retrieved from multiple WARC samples while making hash
+      collisions extremely unlikely in practice.
+    - This helper is pure and does not perform any I/O; callers are free to
+      assign the returned Series to `article_df["article_id"]`.
+    """
+
+    cik_str = article_df["cik_list"].apply(lambda xs: ",".join(sorted(xs)))
+    key_series = (
+        article_df["ny_date"].astype(str)
+        + "|"
+        + article_df["session"]
+        + "|"
+        + article_df["url"].astype(str)
+        + "|"
+        + cik_str
+        + "|"
+        + article_df["full_text"]
+    )
+    return key_series.apply(lambda s: hashlib.sha1(s.encode("utf-8")).hexdigest())
 
 
 if __name__ == "__main__":

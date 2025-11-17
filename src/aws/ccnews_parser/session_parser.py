@@ -12,6 +12,10 @@ Key behaviors
   language, and firm-name matches derived from `RunData.firm_info_dict`.
 - Normalize HTML into uppercase ASCII text and return structured
   `ArticleData` objects alongside `SampleMetadata` counters.
+- Record decompression and record-processing failures in
+  `SampleMetadata` (`decompression_errors`, `unhandled_errors`) and
+  log them via the provided `InfraLogger` without aborting the entire
+  session.
 
 Conventions
 -----------
@@ -42,6 +46,7 @@ from aws.ccnews_parser.news_parser_config import (
     ARTICLE_BODY_XPATHS,
     ARTICLE_ROOT_XPATHS,
     COMPRESSED_CONTENT_TYPES,
+    MAXIMUM_ALLOWED_TOKENS,
     NAME_SUFFIXES_SET,
     NON_VISIBLE_TAGS,
 )
@@ -119,36 +124,76 @@ def process_sample(sample: str, run_data: RunData) -> SampleData:
     Raises
     ------
     None
-        This function does not raise intentionally; fatal errors from
-        S3 access, decompression, or WARC parsing will propagate.
+        This function does not raise intentionally; fatal errors from S3
+        access, gzip decompression, or `ArchiveIterator` construction may
+        still propagate, but errors during record iteration or per-record
+        processing are caught and recorded in `SampleMetadata`.
 
     Notes
     -----
     - All WARC records are counted in `records_scanned`, but only those with
-      `rec_type == "response"` are considered for article extraction.
-    - Structured debug logs are emitted per record with the evolving
-      `SampleMetadata` to aid in diagnosing filter behavior.
+    `rec_type == "response"` are considered for article extraction.
+    - Exceptions raised while iterating records or extracting data from a
+    single record increment `unhandled_errors`, log an `"warc_iter_error"`
+    or `"record_processing_error"` event, and cause that record (or the
+    remainder of the sample, in the iterator case) to be skipped without
+    killing the surrounding session or month.
+    - Structured debug logs are emitted per sample (pre- and post-scan) and
+    per record, with `SampleMetadata` attached as structured context to
+    aid in diagnosing filter behavior.
     """
-
     articles: list[ArticleData] = []
     sample_metadata = initialize_sample_metadata()
+
     with extract_warc_sample(sample, run_data) as warc_file:
-        for record in ArchiveIterator(warc_file):
-            run_data.logger.debug(
-                f"Processing record: {record.rec_headers.get_header('WARC-Record-ID')}"
-            )
-            sample_metadata.records_scanned += 1
-            if record.rec_type != "response":
+        iterator = ArchiveIterator(warc_file)
+        while True:
+            try:
+                record = next(iterator)
+            except StopIteration:
+                break
+            except Exception as exc:
+                sample_metadata.unhandled_errors += 1
+                run_data.logger.error(
+                    "warc_iter_error",
+                    context={
+                        "sample": sample,
+                        "exception": str(exc),
+                    },
+                )
+                # Bail out of this *sample*, but don't kill the session/month
+                break
+
+            try:
+                run_data.logger.debug(
+                    f"Processing record: {record.rec_headers.get_header('WARC-Record-ID')}"
+                )
+                sample_metadata.records_scanned += 1
+                if record.rec_type != "response":
+                    continue
+
+                article_data: ArticleData | None = extract_data_from_record(
+                    sample, record, sample_metadata, run_data
+                )
+                if article_data:
+                    articles.append(article_data)
+
+                run_data.logger.debug(
+                    f"Completed record: {record.rec_headers.get_header('WARC-Record-ID')}",
+                    context=sample_metadata.__dict__,
+                )
+            except Exception as exc:
+                sample_metadata.unhandled_errors += 1
+                run_data.logger.error(
+                    "record_processing_error",
+                    context={
+                        "sample": sample,
+                        "record_id": record.rec_headers.get_header("WARC-Record-ID"),
+                        "exception": str(exc),
+                    },
+                )
                 continue
-            article_data: ArticleData | None = extract_data_from_record(
-                sample, record, sample_metadata, run_data
-            )
-            if article_data:
-                articles.append(article_data)
-            run_data.logger.debug(
-                f"Completed record: {record.rec_headers.get_header('WARC-Record-ID')}",
-                context=sample_metadata.__dict__,
-            )
+
     return SampleData(article_data=articles, sample_metadata=sample_metadata)
 
 
@@ -248,42 +293,57 @@ def extract_data_from_record(
     if http_content_type.find("text/html") == -1:
         return None
     http_content_encoding: str = record.http_headers.get_header("Content-Encoding", "")
-    html_text: str = to_text(record, http_content_type, http_content_encoding)
-    visible_text: str | None = convert_to_visible_ascii(html_text)
-    if not visible_text:
-        return None
-    words: list[str] = visible_text.split()
-    word_count: int = len(words)
-    sample_metadata.ge_25_words += 1
     try:
-        detected_language: str = langdetect.detect(visible_text)
-    except langdetect.lang_detect_exception.LangDetectException:
+        html_text: str = to_text(record, http_content_type, http_content_encoding)
+        visible_text: str | None = convert_to_visible_ascii(html_text)
+        if not visible_text:
+            return None
+        words: list[str] = visible_text.split()
+        word_count: int = len(words)
+        sample_metadata.ge_25_words += 1
+        if word_count > MAXIMUM_ALLOWED_TOKENS:
+            sample_metadata.too_long_articles += 1
+            return None
+        try:
+            detected_language: str = langdetect.detect(visible_text)
+        except langdetect.lang_detect_exception.LangDetectException:
+            return None
+        if detected_language != "en":
+            return None
+        sample_metadata.english_count += int(detected_language == "en")
+        name_set = detect_firms(words, run_data)
+        if len(name_set) > 3:
+            sample_metadata.matched_any_firm += 1
+            return None
+        if len(name_set) == 0:
+            return None
+        sample_metadata.matched_any_firm += int(len(name_set) > 0)
+        sample_metadata.articles_kept += 1
+        return ArticleData(
+            warc_path=sample,
+            warc_date_utc=record.rec_headers.get_header("WARC-Date"),
+            url=record.rec_headers.get_header("WARC-Target-URI"),
+            http_status=http_status,
+            http_content_type=http_content_type,
+            payload_digest=record.rec_headers.get_header("WARC-Payload-Digest"),
+            ny_date=run_data.date,
+            session=run_data.session,
+            cik_list=list(name_set),
+            word_count=word_count,
+            language=detected_language,
+            full_text=visible_text,
+        )
+    except (EOFError, OSError, gzip.BadGzipFile) as exc:
+        sample_metadata.decompression_errors += 1
+        run_data.logger.error(
+            "Decompression error processing record",
+            context={
+                "sample": sample,
+                "record_id": record.rec_headers.get_header("WARC-Record-ID"),
+                "exception": str(exc),
+            },
+        )
         return None
-    if detected_language != "en":
-        return None
-    sample_metadata.english_count += int(detected_language == "en")
-    name_set = detect_firms(words, run_data)
-    if len(name_set) > 3:
-        sample_metadata.matched_any_firm += 1
-        return None
-    if len(name_set) == 0:
-        return None
-    sample_metadata.matched_any_firm += int(len(name_set) > 0)
-    sample_metadata.articles_kept += 1
-    return ArticleData(
-        warc_path=sample,
-        warc_date_utc=record.rec_headers.get_header("WARC-Date"),
-        url=record.rec_headers.get_header("WARC-Target-URI"),
-        http_status=http_status,
-        http_content_type=http_content_type,
-        payload_digest=record.rec_headers.get_header("WARC-Payload-Digest"),
-        ny_date=run_data.date,
-        session=run_data.session,
-        cik_list=list(name_set),
-        word_count=word_count,
-        language=detected_language,
-        full_text=visible_text,
-    )
 
 
 def to_text(record: Any, http_content_type: str, http_content_encoding: str) -> str:

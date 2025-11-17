@@ -503,7 +503,10 @@ def test_samples_to_parquet_writes_articles_and_metadata(
     sample_metadata = SampleMetadata(
         records_scanned=10,
         html_200_count=5,
+        unhandled_errors=0,
+        decompression_errors=0,
         ge_25_words=4,
+        too_long_articles=0,
         english_count=3,
         matched_any_firm=2,
         articles_kept=1,
@@ -600,7 +603,10 @@ def test_samples_to_parquet_skips_article_write_when_no_articles(
     sample_metadata = SampleMetadata(
         records_scanned=3,
         html_200_count=2,
+        unhandled_errors=0,
+        decompression_errors=0,
         ge_25_words=1,
+        too_long_articles=0,
         english_count=1,
         matched_any_firm=0,
         articles_kept=0,
@@ -688,7 +694,10 @@ def test_run_month_parser_invokes_generate_and_parquet_for_each_session(
         md = SampleMetadata(
             records_scanned=0,
             html_200_count=0,
+            unhandled_errors=0,
+            decompression_errors=0,
             ge_25_words=0,
+            too_long_articles=0,
             english_count=0,
             matched_any_firm=0,
             articles_kept=0,

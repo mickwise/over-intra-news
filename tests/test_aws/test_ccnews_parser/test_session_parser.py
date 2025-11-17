@@ -1,7 +1,7 @@
 """
 Purpose
 -------
-Unit tests for (`session_parser.py`).
+Unit tests for `aws.ccnews_parser.session_parser`.
 
 Key behaviors
 -------------
@@ -21,7 +21,8 @@ Key behaviors
 - Ensure that `convert_to_visible_ascii`:
   - strips non-visible tags, normalizes whitespace, and uppercases text,
   - removes non-ASCII characters, and
-  - returns None when HTML parsing fails.
+  - returns None when HTML parsing fails or no article-like body can be
+    extracted.
 - Check that `detect_firms`:
   - canonicalizes article words via `word_canonicalizer`, and
   - returns CIKs whose canonicalized firm-name tokens (including suffixes)
@@ -30,7 +31,7 @@ Key behaviors
 Conventions
 -----------
 - A minimal `_DummyLogger` mimics the subset of `InfraLogger` used by the
-  parser, recording `debug`, `info`, and `warning` events.
+  parser, recording `debug`, `info`, `warning`, and `error` events.
 - Lightweight `_DummyRecord` and header stubs stand in for `warcio`
   records and headers so tests exercise only local control flow.
 - Language detection is deterministic via monkeypatching
@@ -70,11 +71,12 @@ class _DummyLogger:
     """
     Purpose
     -------
-    Minimal stand-in for `InfraLogger` capturing debug/info/warning calls.
+    Minimal stand-in for `InfraLogger` capturing debug/info/warning/error calls.
 
     Key behaviors
     -------------
-    - Records `.debug(...)`, `.info(...)`, and `.warning(...)` invocations.
+    - Records `.debug(...)`, `.info(...)`, `.warning(...)`, and `.error(...)`
+      invocations.
     - Stores event name, positional args, and keyword args for assertions.
 
     Parameters
@@ -89,12 +91,15 @@ class _DummyLogger:
         Recorded info-level events.
     warnings : list[dict[str, Any]]
         Recorded warning-level events.
+    errors : list[dict[str, Any]]
+        Recorded error-level events.
     """
 
     def __init__(self) -> None:
         self.debugs: List[Dict[str, Any]] = []
         self.infos: List[Dict[str, Any]] = []
         self.warnings: List[Dict[str, Any]] = []
+        self.errors: List[Dict[str, Any]] = []
 
     def debug(self, event: str, *args: Any, **kwargs: Any) -> None:
         self.debugs.append({"event": event, "args": args, "kwargs": kwargs})
@@ -105,6 +110,9 @@ class _DummyLogger:
     def warning(self, event: str, *args: Any, **kwargs: Any) -> None:
         self.warnings.append({"event": event, "args": args, "kwargs": kwargs})
 
+    def error(self, event: str, *args: Any, **kwargs: Any) -> None:
+        self.errors.append({"event": event, "args": args, "kwargs": kwargs})
+
 
 class _DummyHeaders:
     """
@@ -114,15 +122,16 @@ class _DummyHeaders:
 
     Key behaviors
     -------------
-    - Exposes `.get_statuscode()` and `.get(...)` methods matching the
-      subset used by `session_parser`.
+    - Exposes `.get_statuscode()`, `.get(...)`, and `.get_header(...)` methods
+      matching the subset used by `session_parser`.
 
     Parameters
     ----------
     status : int
         HTTP status code to be returned by `.get_statuscode()`.
     headers : dict[str, str] | None
-        Mapping of header names to values used by `.get(...)`.
+        Mapping of header names to values used by `.get(...)` and
+        `.get_header(...)`.
     """
 
     def __init__(self, status: int = 200, headers: Dict[str, str] | None = None) -> None:
@@ -192,6 +201,12 @@ class _DummyS3Client:
     -------------
     - Returns a preconfigured gzip-compressed payload for any object key.
     - Records requests so tests can assert on bucket/key usage.
+
+    Parameters
+    ----------
+    payload : bytes
+        Gzip-compressed payload that will be exposed via the returned
+        object's `"Body"` attribute.
     """
 
     def __init__(self, payload: bytes) -> None:
@@ -262,7 +277,10 @@ def test_parse_session_invokes_process_sample_for_each_sample(
         md = SampleMetadata(
             records_scanned=1,
             html_200_count=0,
+            unhandled_errors=0,
+            decompression_errors=0,
             ge_25_words=0,
+            too_long_articles=0,
             english_count=0,
             matched_any_firm=0,
             articles_kept=0,
@@ -335,9 +353,10 @@ def test_process_sample_scans_all_records_and_collects_articles(
     def fake_extract_warc_sample(sample: str, run_data: RunData) -> _Context:
         return _Context(fileobj="dummy-file")
 
-    def fake_archive_iterator(fileobj: Any) -> List[_DummyRecord]:
+    def fake_archive_iterator(fileobj: Any):
         assert fileobj == "dummy-file"
-        return records
+        # Return an iterator, not a list, so `next(iterator)` works in `process_sample`.
+        return iter(records)
 
     seen_records: List[_DummyRecord] = []
 

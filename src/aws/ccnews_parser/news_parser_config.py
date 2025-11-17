@@ -12,6 +12,8 @@ Key behaviors
   processes.
 - Enumerates `COMPRESSED_CONTENT_TYPES` to decide when HTTP payloads
   should be transparently decompressed.
+- Sets `MAXIMUM_ALLOWED_TOKENS` as an upper bound on canonicalized article
+  length; records exceeding this token count are dropped as too long.
 - Lists `NON_VISIBLE_TAGS` that are stripped from HTML before visible
   text extraction (e.g., `<script>`, `<style>`, `<head>`).
 - Defines `NAME_SUFFIXES_SET` of common corporate suffixes used during
@@ -28,6 +30,8 @@ Conventions
   avoid degenerate zero-worker configurations.
 - `MAXIMAL_WORKER_COUNT` is capped at 12 and always at least two fewer
   than `CPU_COUNT` to balance throughput with system stability.
+- `MAXIMUM_ALLOWED_TOKENS` is treated as a hard upper bound on the number
+  of whitespace-separated tokens in canonicalized article text.
 - All tag and suffix sets are uppercase to align with upstream text
   normalization, which converts tokens to uppercase ASCII.
 - `ARTICLE_ROOT_XPATHS` are absolute XPaths evaluated against the document
@@ -51,6 +55,7 @@ from typing import List
 CPU_COUNT: int = os.cpu_count() or 8
 MAXIMAL_WORKER_COUNT: int = max(1, min(CPU_COUNT - 2, 12))
 COMPRESSED_CONTENT_TYPES: set[str] = {"gzip", "x-gzip", "deflate"}
+MAXIMUM_ALLOWED_TOKENS: int = 3000
 ARTICLE_ROOT_XPATHS: List[str] = [
     # Semantic HTML5 containers
     "//article",

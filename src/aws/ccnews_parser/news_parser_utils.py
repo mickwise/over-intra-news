@@ -266,18 +266,27 @@ class SampleMetadata:
     -------------
     - Track how many records were scanned and how many passed successive
       gating criteria (HTML status, length, language, firm match).
-    - Provide compact counters that can be aggregated across runs to assess
-      filter yield and health.
+    - Count unhandled and decompression-specific errors so they can be
+      monitored separately from normal gating drops.
 
     Parameters
     ----------
     records_scanned : int
         Total number of WARC records examined in the sample.
     html_200_count : int
-        Count of records with HTTP status 200 and HTML-like content type.
+        Count of records with HTTP status 200, regardless of content type.
+    unhandled_errors : int
+        Count of records (or iterator steps) that raised an unexpected
+        exception during processing.
+    decompression_errors : int
+        Count of records that failed during decompression or low-level I/O
+        (e.g., `gzip.BadGzipFile`, `EOFError`, `OSError`).
     ge_25_words : int
         Count of records whose canonicalized visible text contained at least
         25 tokens.
+    too_long_articles : int
+        Count of records whose canonicalized visible text exceeded the
+        configured maximum token threshold.
     english_count : int
         Count of records whose detected language was English.
     matched_any_firm : int
@@ -291,9 +300,18 @@ class SampleMetadata:
     records_scanned : int
         Updated for every record encountered in the WARC file.
     html_200_count : int
-        Incremented for each HTTP-200 HTML response.
+        Incremented for each HTTP-200 response before content-type gating.
+    unhandled_errors : int
+        Incremented when an unexpected exception occurs while iterating or
+        processing records.
+    decompression_errors : int
+        Incremented when decompression or low-level I/O for a record fails.
     ge_25_words : int
-        Incremented for each response with sufficient token length.
+        Incremented for each response with sufficient token length
+        (≥ 25 tokens).
+    too_long_articles : int
+        Incremented for each response whose token count exceeds the maximum
+        allowed threshold.
     english_count : int
         Incremented when language detection returns `"en"`.
     matched_any_firm : int
@@ -309,9 +327,13 @@ class SampleMetadata:
       get per-day or per-session totals.
     """
 
+
     records_scanned: int
     html_200_count: int
+    unhandled_errors: int
+    decompression_errors: int
     ge_25_words: int
+    too_long_articles: int
     english_count: int
     matched_any_firm: int
     articles_kept: int
@@ -488,7 +510,10 @@ def initialize_sample_metadata() -> SampleMetadata:
     return SampleMetadata(
         records_scanned=0,
         html_200_count=0,
+        unhandled_errors=0,
+        decompression_errors=0,
         ge_25_words=0,
+        too_long_articles=0,
         english_count=0,
         matched_any_firm=0,
         articles_kept=0,
