@@ -43,6 +43,7 @@ from typing import Any, List
 import boto3
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 
 from aws.ccnews_sampler.calendar_utils import extract_nyse_cal
 from aws.ccnews_sampler.ccnews_sampler_types import SamplingDict, YearMonth
@@ -76,7 +77,7 @@ def main() -> None:
     - Intended to be invoked as the module's `__main__` entry point, not called
       directly from other code.
     """
-
+    load_dotenv()
     bucket, daily_cap, logger_level = extract_cli_args()
     logger: InfraLogger = initialize_logger(
         component_name="ccnews_sampler.uniform_sampling",
