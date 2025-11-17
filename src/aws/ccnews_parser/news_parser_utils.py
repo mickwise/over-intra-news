@@ -111,7 +111,10 @@ class RunData:
     firm_info_dict : dict[str, FirmInfo]
         Mapping from CIK to `FirmInfo` describing the firm universe active
         on `date`.
-    samples : list[str]
+    firm_name_parts : dict[str, set[str]]
+        Pre-computed mapping from CIK to the set of canonicalized name
+        parts used for efficient firm-name matching.
+    samples : List[str]
         List of S3 URIs pointing to WARC sample files to be processed for
         this (date, session).
     logger : InfraLogger
@@ -131,7 +134,9 @@ class RunData:
         S3 bucket name used for both reads and writes.
     firm_info_dict : dict[str, FirmInfo]
         Active firm universe keyed by CIK for this trading date.
-    samples : list[str]
+    firm_name_parts : dict[str, set[str]]
+        Pre-computed canonicalized name parts for each firm in the universe.
+    samples : List[str]
         WARC sample URIs that the session parser will iterate over.
     logger : InfraLogger
         Logging handle scoped to this run.
@@ -150,7 +155,8 @@ class RunData:
     session: str
     bucket: str
     firm_info_dict: dict[str, FirmInfo]
-    samples: list[str]
+    firm_name_parts: dict[str, set[str]]
+    samples: List[str]
     logger: InfraLogger
     s3_client: Any
 
@@ -193,14 +199,15 @@ class ArticleData:
     session : str
         Session label (e.g., "intraday" or "overnight") indicating how the
         article was bucketed relative to the trading day.
-    cik_list : list[str]
+    cik_list : List[str]
         List of matched CIKs corresponding to firms referenced in the
         article text.
     word_count : int
         Number of whitespace-separated tokens in the canonicalized article
         body.
-    language : str
-        ISO 639-1 language code detected for the article text (e.g., "en").
+    language_confidence : float
+        Confidence score (0.0–1.0) from the language detection model for
+        the detected language from langdetect.
     full_text : str
         Canonicalized article text (typically ASCII uppercased) used as the
         basis for topic modeling and further processing.
@@ -223,21 +230,22 @@ class ArticleData:
         Trading day alignment used for return matching and labeling.
     session : str
         Session bucket for intraday vs overnight partitioning.
-    cik_list : list[str]
+    cik_list : List[str]
         Zero or more firm identifiers associated with the article.
     word_count : int
         Basic length measure of the article after canonicalization.
-    language : str
-        Detected dominant language of the article text.
+    language_confidence : float
+        Confidence score (0.0–1.0) from the language detection model for
+        the detected language from langdetect.
     full_text : str
         Canonicalized text for downstream NLP.
 
     Notes
     -----
     - This dataclass is intended to be serialized directly (e.g., via
-    `.__dict__`) into Parquet rows.
+      `.__dict__`) into Parquet rows.
     - No heavy text processing (tokenization, stop-word removal) is performed
-      here; downstream modeling code may further transform `full_text`.
+      here; downstream modeling code further transforms `full_text`.
     """
 
     warc_path: str
@@ -248,9 +256,9 @@ class ArticleData:
     payload_digest: str
     ny_date: dt.date
     session: str
-    cik_list: list[str]
+    cik_list: List[str]
     word_count: int
-    language: str
+    language_confidence: float
     full_text: str
 
 
@@ -354,14 +362,14 @@ class SampleData:
 
     Parameters
     ----------
-    article_data : list[ArticleData]
+    article_data : List[ArticleData]
         All articles retained from the sample after applying filters.
     sample_metadata : SampleMetadata
         Aggregate counters describing how the sample was processed.
 
     Attributes
     ----------
-    article_data : list[ArticleData]
+    article_data : List[ArticleData]
         Per-article payloads suitable for direct serialization to Parquet.
     sample_metadata : SampleMetadata
         Per-sample diagnostics suitable for monitoring and yield analysis.
@@ -373,7 +381,7 @@ class SampleData:
       metadata-level Parquet datasets by the orchestrator.
     """
 
-    article_data: list[ArticleData]
+    article_data: List[ArticleData]
     sample_metadata: SampleMetadata
 
 

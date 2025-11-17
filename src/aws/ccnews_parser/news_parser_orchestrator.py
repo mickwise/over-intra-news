@@ -51,13 +51,14 @@ import botocore.exceptions
 import pandas as pd
 from dotenv import load_dotenv
 
-from aws.ccnews_parser.news_parser_config import MAXIMAL_WORKER_COUNT
+from aws.ccnews_parser.news_parser_config import FIRST_DAY, MAXIMAL_WORKER_COUNT
 from aws.ccnews_parser.news_parser_utils import (
     FirmInfo,
     RunData,
     SampleData,
     extract_firm_info_per_day,
     extract_trading_calendar_slice,
+    word_canonicalizer,
 )
 from aws.ccnews_parser.session_parser import parse_session
 from infra.logging.infra_logger import InfraLogger, initialize_logger
@@ -129,8 +130,8 @@ def extract_cli_args() -> tuple[int, str, str]:
     -------
     tuple[int, str, str]
         A 3-tuple `(year, bucket, logger_level)` where `year` is an integer,
-        `bucket` is the raw bucket string, and `logger_level` is an upper-case
-        logging level hint (e.g., "INFO", "DEBUG").
+        `bucket` is the raw bucket string, and `logger_level` is a logging
+        level hint string (e.g., "INFO", "DEBUG").
 
     Raises
     ------
@@ -169,14 +170,14 @@ def run_month_parser(
     month : int
         Calendar month (1–12) within `year` whose trading days are being
         processed.
-    trading_days : list[datetime.date]
+    trading_days : List[datetime.date]
         List of trading dates in this month, typically obtained from
         `extract_trading_calendar_slice`.
     bucket : str
         Name of the S3 bucket holding input WARC sample manifests and receiving
         output Parquet datasets.
     logger_level : str
-        Logging verbosity level (e.g., `"INFO"`, `"DEBUG"`) passed to
+        Logging verbosity level (e.g., "INFO", "DEBUG") passed to
         `initialize_logger` for the month-level logger.
 
     Returns
@@ -188,8 +189,9 @@ def run_month_parser(
     Raises
     ------
     botocore.exceptions.BotoCoreError
-        If S3 interactions in `generate_run_data` or `samples_to_parquet` fail
-        in a way that is not caught locally.
+        If S3 interactions in `generate_run_data` fail in a way that is not
+        caught locally (for example, non-`ClientError` failures when fetching
+        `samples.txt`).
     Exception
         Any unexpected error that occurs before the per-session try/except
         blocks (for example, logger initialization) and is not handled within
@@ -213,29 +215,53 @@ def run_month_parser(
         level=logger_level,
         run_meta={"year": year, "month": month, "bucket": bucket},
     )
+    s3_client: Any = boto3.client("s3")
     for date in trading_days:
         for session in ["intraday", "overnight"]:
-            run_data: RunData | None = generate_run_data(year, month, date, session, bucket, logger)
+            run_data: RunData | None = generate_run_data(
+                year, month, date, session, bucket, logger, s3_client
+            )
             if run_data is None:
-                logger.warning(f"No WARC files found for {date} session {session}")
+                logger.warning(
+                    event="run_month_parser",
+                    msg=f"No WARC samples for {date} session {session}; skipping",
+                )
                 continue
-            logger.debug(
-                (f"Processing {len(run_data.samples)} WARC files" f"for {date} session {session}")
+            logger.info(
+                event="run_month_parser",
+                msg=f"Parsing {date} session {session} with {len(run_data.samples)} samples",
             )
             try:
                 samples_data: List[SampleData] = parse_session(run_data)
-            except Exception as e:
-                logger.error(f"Error parsing session for {date} session {session}: {e}")
+            except Exception as e:  # pylint: disable=W0718
+                logger.error(
+                    event="run_month_parser",
+                    msg=(
+                        f"Error parsing session for {date} session {session}:"
+                        f" {type(e).__name__}: {e}"
+                    ),
+                )
                 continue
             try:
                 samples_to_parquet(samples_data, run_data)
-            except Exception as e:
-                logger.error(f"Error writing Parquet for {date} session {session}: {e}")
-                continue
+            except Exception as e:  # pylint: disable=W0718
+                logger.error(
+                    event="run_month_parser",
+                    msg=(
+                        f"Error writing Parquet for {date} session {session}:"
+                        f" {type(e).__name__}: {e}"
+                    ),
+                )
 
 
 def generate_run_data(
-    year: int, month: int, date: dt.date, session: str, bucket: str, logger: InfraLogger
+    year: int,
+    month: int,
+    date: dt.date,
+    session: str,
+    bucket: str,
+    logger: InfraLogger,
+    s3_client: Any,
 ) -> RunData | None:
     """
     Construct a `RunData` bundle for a single (date, session) pair.
@@ -256,6 +282,9 @@ def generate_run_data(
         S3 bucket containing `samples.txt` manifests and WARC files.
     logger : InfraLogger
         Logger used for warnings and debug output during data extraction.
+    s3_client : Any
+        Pre-configured `boto3` S3 client used to fetch the per-session
+        `samples.txt` manifest.
 
     Returns
     -------
@@ -267,35 +296,48 @@ def generate_run_data(
     Raises
     ------
     botocore.exceptions.BotoCoreError
-        If constructing the S3 client or fetching `samples.txt` fails in a
-        way that is not caught by `extract_per_session_warcs`.
+        If fetching `samples.txt` from S3 fails with a non-`ClientError`
+        condition that is not handled inside `extract_per_session_warcs`.
     Exception
         Any database-related errors raised by `extract_firm_info_per_day` are
         propagated to the caller.
 
     Notes
     -----
-    - The function creates a fresh `boto3` S3 client per call, which is safe
-      for use in multi-process execution.
-    - When no samples are found, the function returns `None` instead of
-      raising; callers are expected to log and skip that (date, session).
-    - `firm_info_dict` is keyed by CIK and represents the firm universe
-      active on `date` according to the S&P membership and security profile
-      history tables.
+    - `extract_per_session_warcs` handles `ClientError` (e.g., `NoSuchKey`)
+      by logging a warning and returning an empty list; in that case this
+      function returns `None` to signal that the (date, session) should be
+      skipped.
+    - For `"intraday"` sessions, the firm universe is resolved on `date`.
+    - For `"overnight"` sessions, the firm universe is resolved on
+      `date - 1 day` except when `date == FIRST_DAY`, in which case the
+      same-day universe is used to avoid querying before the historical
+      start of membership data.
+    - `firm_name_parts` is built by splitting each `FirmInfo.firm_name`
+      on whitespace and canonicalizing each token via `word_canonicalizer`.
     """
 
-    s3_client: Any = boto3.client("s3")
     samples: List[str] = extract_per_session_warcs(
         year, month, date.day, session, bucket, logger, s3_client
     )
     if not samples:
         return None
-    firm_info_dict: dict[str, FirmInfo] = extract_firm_info_per_day(date)
+    firm_info_dict: dict[str, FirmInfo]
+    if session == "overnight" and date != FIRST_DAY:
+        firm_info_dict = extract_firm_info_per_day(date - dt.timedelta(days=1))
+    else:
+        firm_info_dict = extract_firm_info_per_day(date)
+    firm_name_parts: dict[str, set[str]] = {}
+    for firm_info in firm_info_dict.values():
+        parts = {word_canonicalizer(part) for part in firm_info.firm_name.split()}
+        if parts:
+            firm_name_parts[firm_info.cik] = parts
     return RunData(
         date=date,
         session=session,
         bucket=bucket,
         firm_info_dict=firm_info_dict,
+        firm_name_parts=firm_name_parts,
         samples=samples,
         logger=logger,
         s3_client=s3_client,
@@ -353,7 +395,8 @@ def extract_per_session_warcs(
     """
 
     logger.debug(
-        f"Extracting WARC files for {year}-{month}-{day} session {session} to bucket {bucket}"
+        event="extract_per_session_warcs",
+        msg=f"Fetching samples.txt for {year}-{month}-{day} session {session} from bucket {bucket}",
     )
     key: str = f"{year}/{month:02d}/{day:02d}/{session}/samples.txt"
     try:
@@ -364,12 +407,17 @@ def extract_per_session_warcs(
         samples_content: str = samples_file["Body"].read().decode("utf-8")
         samples: List[str] = samples_content.splitlines()
         logger.debug(
-            f"Extracted {len(samples)} WARC files for {year}-{month}-{day} session {session}"
+            event="extract_per_session_warcs",
+            msg=f"Found {len(samples)} samples for {year}-{month}-{day} session {session}",
         )
         return samples
     except botocore.exceptions.ClientError:
         logger.warning(
-            f"No samples.txt found for {year}-{month}-{day} session {session} in bucket {bucket}"
+            event="extract_per_session_warcs",
+            msg=(
+                f"No samples.txt found for {year}-{month}-{day}"
+                f"session {session} in bucket {bucket}"
+            ),
         )
         return []
 
@@ -380,7 +428,7 @@ def samples_to_parquet(samples_data: List[SampleData], run_data: RunData) -> Non
 
     Parameters
     ----------
-    samples_data : list[SampleData]
+    samples_data : List[SampleData]
         Collection of `SampleData` objects for a single `(date, session)`, each
         bundling the articles and scan statistics for an individual WARC sample.
     run_data : RunData
@@ -438,14 +486,15 @@ def samples_to_parquet(samples_data: List[SampleData], run_data: RunData) -> Non
         )
         articles_s3_path = f"s3://{run_data.bucket}/{articles_key_prefix}/articles.parquet"
 
-        run_data.logger.info(f"Writing {len(articles_df)} articles to {articles_s3_path}")
+        run_data.logger.info(
+            event="samples_to_parquet",
+            msg=f"Writing {len(articles_df)} articles to {articles_s3_path}",
+        )
         articles_df.to_parquet(articles_s3_path, index=False)
     else:
         run_data.logger.warning(
-            (
-                f"No articles kept for {run_data.date} session {run_data.session};"
-                "skipping article Parquet"
-            )
+            event="samples_to_parquet",
+            msg=f"No articles to write for {run_data.date} session {run_data.session}; skipping",
         )
     meta_data: List[dict[str, Any]] = [
         (
@@ -466,7 +515,10 @@ def samples_to_parquet(samples_data: List[SampleData], run_data: RunData) -> Non
         )
         meta_s3_path = f"s3://{run_data.bucket}/{meta_key_prefix}/sample_stats.parquet"
 
-        run_data.logger.info(f"Writing {len(meta_df)} sample metadata rows to {meta_s3_path}")
+        run_data.logger.info(
+            event="samples_to_parquet",
+            msg=f"Writing sample stats for {len(meta_df)} samples to {meta_s3_path}",
+        )
         meta_df.to_parquet(meta_s3_path, index=False)
 
 
@@ -479,7 +531,7 @@ def generate_article_id(article_df: pd.DataFrame) -> pd.Series:
     article_df : pandas.DataFrame
         DataFrame containing article-level records for a single `(date, session)`
         slice. It is expected to expose at least the columns
-        `ny_date`, `session`, `url`, `cik_list`, and `full_text`.
+        `ny_date`, `session`, and `full_text`.
 
     Returns
     -------
@@ -490,18 +542,14 @@ def generate_article_id(article_df: pd.DataFrame) -> pd.Series:
     Raises
     ------
     KeyError
-        If any of the required columns (`ny_date`, `session`, `url`,
-        `cik_list`, `full_text`) are missing from `article_df`.
-    TypeError
-        If `cik_list` values cannot be iterated and string-joined (e.g., are not
-        list-like).
+        If any of the required columns (`ny_date`, `session`, `full_text`)
+        are missing from `article_df`.
 
     Notes
     -----
     - The identifier for each row is computed by concatenating
-      `ny_date`, `session`, `url`, a comma-separated and sorted `cik_list`,
-      and `full_text` with `"|"` separators, and then hashing the resulting
-      key with SHA-1.
+      `ny_date`, `session`, and `full_text` with `"|"` separators,
+      and then hashing the resulting key with SHA-1.
     - Using a content-based identifier allows deterministic deduplication of
       articles retrieved from multiple WARC samples while making hash
       collisions extremely unlikely in practice.
@@ -509,15 +557,10 @@ def generate_article_id(article_df: pd.DataFrame) -> pd.Series:
       assign the returned Series to `article_df["article_id"]`.
     """
 
-    cik_str = article_df["cik_list"].apply(lambda xs: ",".join(sorted(xs)))
     key_series = (
         article_df["ny_date"].astype(str)
         + "|"
         + article_df["session"]
-        + "|"
-        + article_df["url"].astype(str)
-        + "|"
-        + cik_str
         + "|"
         + article_df["full_text"]
     )

@@ -52,6 +52,7 @@ import datetime as dt
 import gzip
 import io
 import typing
+from dataclasses import dataclass
 from typing import Any, Dict, List, cast
 
 import pytest
@@ -218,6 +219,12 @@ class _DummyS3Client:
         return {"Body": io.BytesIO(self._payload)}
 
 
+@dataclass
+class _FakeLangDetectResult:
+    lang: str
+    prob: float
+
+
 def test_parse_session_invokes_process_sample_for_each_sample(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -265,6 +272,7 @@ def test_parse_session_invokes_process_sample_for_each_sample(
         session="intraday",
         bucket="bucket",
         firm_info_dict={},
+        firm_name_parts={},
         samples=samples,
         logger=cast(InfraLogger, dummy_logger),
         s3_client=object(),
@@ -380,7 +388,7 @@ def test_process_sample_scans_all_records_and_collects_articles(
                 session=run_data.session,
                 cik_list=["0001"],
                 word_count=100,
-                language="en",
+                language_confidence=0.99,
                 full_text="TEXT",
             )
         return None
@@ -395,6 +403,7 @@ def test_process_sample_scans_all_records_and_collects_articles(
         session="intraday",
         bucket="bucket",
         firm_info_dict={},
+        firm_name_parts={},
         samples=[],
         logger=cast(InfraLogger, dummy_logger),
         s3_client=object(),
@@ -450,6 +459,7 @@ def test_extract_warc_sample_opens_gzip_from_s3_object() -> None:
         session="intraday",
         bucket="my-bucket",
         firm_info_dict={},
+        firm_name_parts={},
         samples=[],
         logger=cast(InfraLogger, dummy_logger),
         s3_client=s3_client,
@@ -504,6 +514,7 @@ def test_extract_data_from_record_filters_non_200_responses() -> None:
         session="intraday",
         bucket="bucket",
         firm_info_dict={},
+        firm_name_parts={},
         samples=[],
         logger=cast(InfraLogger, dummy_logger),
         s3_client=object(),
@@ -565,6 +576,7 @@ def test_extract_data_from_record_filters_non_html_content_type() -> None:
         session="intraday",
         bucket="bucket",
         firm_info_dict={},
+        firm_name_parts={},
         samples=[],
         logger=cast(InfraLogger, dummy_logger),
         s3_client=object(),
@@ -633,21 +645,25 @@ def test_extract_data_from_record_returns_article_when_all_gates_pass(
     def fake_convert_to_visible_ascii(html_text: str) -> str | None:
         return visible_text
 
-    def fake_detect(text: str) -> str:
-        return "en"
+    def fake_detect(text: str) -> List[_FakeLangDetectResult]:
+        return [_FakeLangDetectResult(lang="en", prob=0.99)]
 
     monkeypatch.setattr(sp, "convert_to_visible_ascii", fake_convert_to_visible_ascii)
-    monkeypatch.setattr(sp.langdetect, "detect", fake_detect)
+    monkeypatch.setattr(sp.langdetect, "detect_langs", fake_detect)
 
     dummy_logger = _DummyLogger()
     firm_info_dict = {
         "0001": FirmInfo(cik="0001", firm_name="ACME HOLDINGS INC"),
+    }
+    firm_name_parts = {
+        "0001": {"ACME", "HOLDINGS", "INC"},
     }
     run_data = RunData(
         date=dt.date(2020, 1, 2),
         session="intraday",
         bucket="bucket",
         firm_info_dict=firm_info_dict,
+        firm_name_parts=firm_name_parts,
         samples=[],
         logger=cast(InfraLogger, dummy_logger),
         s3_client=object(),
@@ -678,7 +694,7 @@ def test_extract_data_from_record_returns_article_when_all_gates_pass(
     assert article.ny_date == run_data.date
     assert set(article.cik_list) == {"0001"}
     assert article.word_count == len(visible_text.split())
-    assert article.language == "en"
+    assert article.language_confidence == 0.99
 
     assert sample_metadata.html_200_count == 1
     assert sample_metadata.ge_25_words == 1
@@ -934,12 +950,17 @@ def test_detect_firms_matches_when_all_name_tokens_present() -> None:
         "0001": FirmInfo(cik="0001", firm_name="ACME HOLDINGS INC"),
         "0002": FirmInfo(cik="0002", firm_name="FOO CORPORATION"),
     }
+    firm_name_parts = {
+        "0001": {"ACME", "HOLDINGS", "INC"},
+        "0002": {"FOO", "CORPORATION"},
+    }
 
     run_data = RunData(
         date=dt.date(2020, 1, 1),
         session="intraday",
         bucket="bucket",
         firm_info_dict=firm_info_dict,
+        firm_name_parts=firm_name_parts,
         samples=[],
         logger=cast(InfraLogger, dummy_logger),
         s3_client=object(),

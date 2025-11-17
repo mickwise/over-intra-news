@@ -32,7 +32,7 @@ Conventions
   than `CPU_COUNT` to balance throughput with system stability.
 - `MAXIMUM_ALLOWED_TOKENS` is treated as a hard upper bound on the number
   of whitespace-separated tokens in canonicalized article text.
-- All tag and suffix sets are uppercase to align with upstream text
+- Name-suffix lists are stored in uppercase to align with upstream text
   normalization, which converts tokens to uppercase ASCII.
 - `ARTICLE_ROOT_XPATHS` are absolute XPaths evaluated against the document
   root, while `ARTICLE_BODY_XPATHS` are relative XPaths evaluated inside
@@ -49,12 +49,23 @@ selection. Adjust values here to tune performance, matching behavior,
 and article-body detection across the entire pipeline.
 """
 
+import datetime as dt
 import os
 from typing import List
 
 CPU_COUNT: int = os.cpu_count() or 8
 MAXIMAL_WORKER_COUNT: int = max(1, min(CPU_COUNT - 2, 12))
+FIRST_DAY: dt.date = dt.date(2016, 8, 1)
 COMPRESSED_CONTENT_TYPES: set[str] = {"gzip", "x-gzip", "deflate"}
+ENCODING_ALIASES: dict[str, str] = {
+    # Cyrillic
+    "cp-1251": "cp1251",
+    "windows-1251": "cp1251",
+    # Weird UTF-8 variants
+    "en_us.utf-8": "utf-8",
+    "en-us.utf-8": "utf-8",
+    "utf8": "utf-8",
+}
 MAXIMUM_ALLOWED_TOKENS: int = 3000
 ARTICLE_ROOT_XPATHS: List[str] = [
     # Semantic HTML5 containers
@@ -153,3 +164,4 @@ NAME_SUFFIXES_SET: set[str] = {
     "UT",
     "MO",
 }
+LANGUAGE_ACCEPTANCE_PROBABILITY: float = 0.99

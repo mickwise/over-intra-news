@@ -46,6 +46,8 @@ from aws.ccnews_parser.news_parser_config import (
     ARTICLE_BODY_XPATHS,
     ARTICLE_ROOT_XPATHS,
     COMPRESSED_CONTENT_TYPES,
+    ENCODING_ALIASES,
+    LANGUAGE_ACCEPTANCE_PROBABILITY,
     MAXIMUM_ALLOWED_TOKENS,
     NAME_SUFFIXES_SET,
     NON_VISIBLE_TAGS,
@@ -132,17 +134,18 @@ def process_sample(sample: str, run_data: RunData) -> SampleData:
     Notes
     -----
     - All WARC records are counted in `records_scanned`, but only those with
-    `rec_type == "response"` are considered for article extraction.
+      `rec_type == "response"` are considered for article extraction.
     - Exceptions raised while iterating records or extracting data from a
-    single record increment `unhandled_errors`, log an `"warc_iter_error"`
-    or `"record_processing_error"` event, and cause that record (or the
-    remainder of the sample, in the iterator case) to be skipped without
-    killing the surrounding session or month.
-    - Structured debug logs are emitted per sample (pre- and post-scan) and
-    per record, with `SampleMetadata` attached as structured context to
-    aid in diagnosing filter behavior.
+      single record increment `unhandled_errors`, log an `"warc_iter_error"`
+      or `"record_processing_error"` event, and cause that record (or the
+      remainder of the sample, in the iterator case) to be skipped without
+      killing the surrounding session or month.
+    - Structured debug logs are emitted per sample (pre- and post-scan), with
+      `SampleMetadata` attached as structured context to aid in diagnosing
+      filter behavior.
     """
-    articles: list[ArticleData] = []
+
+    articles: List[ArticleData] = []
     sample_metadata = initialize_sample_metadata()
 
     with extract_warc_sample(sample, run_data) as warc_file:
@@ -152,7 +155,7 @@ def process_sample(sample: str, run_data: RunData) -> SampleData:
                 record = next(iterator)
             except StopIteration:
                 break
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=W0718
                 sample_metadata.unhandled_errors += 1
                 run_data.logger.error(
                     "warc_iter_error",
@@ -165,9 +168,6 @@ def process_sample(sample: str, run_data: RunData) -> SampleData:
                 break
 
             try:
-                run_data.logger.debug(
-                    f"Processing record: {record.rec_headers.get_header('WARC-Record-ID')}"
-                )
                 sample_metadata.records_scanned += 1
                 if record.rec_type != "response":
                     continue
@@ -177,12 +177,7 @@ def process_sample(sample: str, run_data: RunData) -> SampleData:
                 )
                 if article_data:
                     articles.append(article_data)
-
-                run_data.logger.debug(
-                    f"Completed record: {record.rec_headers.get_header('WARC-Record-ID')}",
-                    context=sample_metadata.__dict__,
-                )
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=W0718
                 sample_metadata.unhandled_errors += 1
                 run_data.logger.error(
                     "record_processing_error",
@@ -241,48 +236,47 @@ def extract_data_from_record(
     sample: str, record: Any, sample_metadata: SampleMetadata, run_data: RunData
 ) -> ArticleData | None:
     """
-    Apply gating logic to a single WARC record and optionally build an article.
+    Apply the full gating pipeline to a single WARC record and construct an
+    `ArticleData` object only when all filters pass.
 
     Parameters
     ----------
     sample : str
-        S3 URI of the WARC sample from which this record originated; stored
-        in the resulting `ArticleData.warc_path` when accepted.
+        S3 URI of the WARC sample from which this record originated; embedded
+        into the returned `ArticleData` for traceability.
     record : Any
-        A WARC record object exposing `rec_type`, `http_headers`,
-        `rec_headers`, and `content_stream()` as provided by `warcio`.
+        WARC record object exposing `rec_type`, `http_headers`, `rec_headers`,
+        and `content_stream()`.
     sample_metadata : SampleMetadata
-        Mutable counters tracking record-level statistics for the enclosing
-        sample; updated in place as gates are evaluated.
+        Mutable counters updated as each gating step succeeds.
     run_data : RunData
-        Run context providing the trading date, session label, firm
-        universe, and logger used for language and firm-name filtering.
+        Execution context providing trading date, session, firm universe,
+        structured logger, and S3 client.
 
     Returns
     -------
     ArticleData | None
-        An `ArticleData` instance when the record passes all filters;
-        otherwise `None` to indicate the record was discarded.
-
-    Raises
-    ------
-    None
-        The function does not raise intentionally; decode, HTML, or language
-        detection errors are handled by returning `None`, while unexpected
-        low-level exceptions from libraries will propagate.
+        Populated article object when all gates are satisfied; otherwise `None`.
 
     Notes
     -----
-    - Gates are applied in the following order:
-        1. HTTP status must be 200 (non-200 responses are dropped).
+    - Gates are applied strictly in this order:
+        1. HTTP status must be 200.
         2. Content-Type must include ``"text/html"``.
-        3. HTML must decode and yield visible ASCII text.
-        4. Text must contain at least 25 whitespace-separated words.
-        5. Detected language (via `langdetect`) must be exactly ``"en"``.
-        6. Firm detection must yield between 1 and 3 CIKs, inclusive.
-    - `SampleMetadata` counters (`html_200_count`, `ge_25_words`,
-      `english_count`, `matched_any_firm`, `articles_kept`) are updated only
-      when the corresponding gates are satisfied.
+        3. HTML is decoded to Unicode and canonicalized to visible ASCII.
+        4. Canonicalized text must contain at least 25 tokens.
+        5. Token count must not exceed `MAXIMUM_ALLOWED_TOKENS`.
+        6. Language detection via `langdetect.detect_langs` must yield:
+            - top language `"en"`, and
+            - probability ≥ `LANGUAGE_ACCEPTANCE_PROBABILITY`.
+        7. Firm matching must yield between 1 and 3 CIKs inclusive.
+    - Gating-related counters in `sample_metadata` are incremented as records
+      pass each threshold (status, length, language, firm match); a single
+      record may contribute to multiple counters.
+    - Any decoding, parsing, or language-detection failure is handled by
+      returning `None`; unexpected low-level exceptions propagate outward and
+      are recorded by the caller.
+    - Only fully accepted records increment `articles_kept`.
     """
 
     http_status: int = int(record.http_headers.get_statuscode())
@@ -298,26 +292,27 @@ def extract_data_from_record(
         visible_text: str | None = convert_to_visible_ascii(html_text)
         if not visible_text:
             return None
-        words: list[str] = visible_text.split()
+        words: List[str] = visible_text.split()
         word_count: int = len(words)
         sample_metadata.ge_25_words += 1
         if word_count > MAXIMUM_ALLOWED_TOKENS:
             sample_metadata.too_long_articles += 1
             return None
         try:
-            detected_language: str = langdetect.detect(visible_text)
+            probabilities: List[Any] = langdetect.detect_langs(visible_text)
         except langdetect.lang_detect_exception.LangDetectException:
             return None
-        if detected_language != "en":
+        top_language: Any = probabilities[0]
+        if top_language.lang != "en" or top_language.prob < LANGUAGE_ACCEPTANCE_PROBABILITY:
             return None
-        sample_metadata.english_count += int(detected_language == "en")
+        sample_metadata.english_count += 1
         name_set = detect_firms(words, run_data)
         if len(name_set) > 3:
             sample_metadata.matched_any_firm += 1
             return None
         if len(name_set) == 0:
             return None
-        sample_metadata.matched_any_firm += int(len(name_set) > 0)
+        sample_metadata.matched_any_firm += 1
         sample_metadata.articles_kept += 1
         return ArticleData(
             warc_path=sample,
@@ -330,7 +325,7 @@ def extract_data_from_record(
             session=run_data.session,
             cik_list=list(name_set),
             word_count=word_count,
-            language=detected_language,
+            language_confidence=top_language.prob,
             full_text=visible_text,
         )
     except (EOFError, OSError, gzip.BadGzipFile) as exc:
@@ -348,41 +343,47 @@ def extract_data_from_record(
 
 def to_text(record: Any, http_content_type: str, http_content_encoding: str) -> str:
     """
-    Decode the HTTP response body into a best-effort Unicode HTML string.
-
-    Parameters
-    ----------
-    record : Any
-        WARC record exposing `content_stream()` that returns a raw byte
-        stream for the HTTP payload.
-    http_content_type : str
-        Lowercased Content-Type header value, used to extract an explicit
-        charset when present.
-    http_content_encoding : str
-        Content-Encoding header value, used to determine whether the body
-        is compressed (e.g., gzip, deflate).
-
-    Returns
+    Purpose
     -------
-    str
-        A decoded HTML string, using the declared charset when available or
-        a UTF-8-plus-fallback strategy otherwise.
+    Decode the HTTP response body from a WARC record into a best-effort Unicode
+    HTML string, handling compressed payloads and common mis-labelled charsets
+    without aborting the record.
 
-    Raises
-    ------
-    OSError
-        If gzip decompression fails for a compressed payload.
-    UnicodeDecodeError
-        If decoding fails in both the primary and fallback code paths.
+    Key behaviors
+    -------------
+    - Transparently decompress the payload when `Content-Encoding` indicates a
+      compressed body (e.g. `gzip`, `deflate`), otherwise stream the raw bytes.
+    - When a `charset` parameter is present in `Content-Type`, normalize it via
+      `ENCODING_ALIASES` and attempt a single decode using that codec with
+      `errors="replace"`.
+    - When no `charset` is declared, decode as UTF-8 with replacement and, if
+      the decoded string contains the replacement character `�`, perform a
+      Latin-1 salvage pass to recover additional text.
+    - Callers treat malformed characters as noise that will be filtered by
+      downstream gates.
 
-    Notes
-    -----
-    - When `http_content_encoding` is in `COMPRESSED_CONTENT_TYPES`, the
-      payload is transparently decompressed before decoding.
-    - If no charset is declared, the function first attempts UTF-8 decoding
-      with replacement; if the replacement character ``"�"`` appears, it
-      retries by re-encoding to UTF-8 bytes and decoding as Latin-1 to
-      salvage mis-labeled content.
+    Conventions
+    -----------
+    - The response body is read exactly once into memory as a `bytes` object so
+      that multiple decode attempts do not re-hit S3 or exhaust the stream.
+    - `ENCODING_ALIASES` maps common mis-labelled charsets (such as `"cp-1251"`
+      or `"en_us.utf-8"`) onto valid Python codec names (e.g. `"cp1251"`,
+      `"utf-8"`), preventing avoidable `LookupError`s in practice.
+    - All decode operations use `errors="replace"` so that decoding never raises
+      `UnicodeDecodeError`; truly unknown or invalid charsets in the presence of
+      a `charset` parameter will surface as codec lookup errors rather than
+      decoding errors.
+    - Charset issues that do not raise (i.e. when a codec is found) are handled
+      internally; callers receive a best-effort HTML string and apply
+      higher-level gates (length, language, firm matches) afterwards.
+
+    Downstream usage
+    ----------------
+    This helper is called from `extract_data_from_record(...)` before HTML
+    parsing. It guarantees that either a Unicode HTML string is returned or a
+    low-level I/O/codec error is raised; such errors are handled by the caller
+    as `record_processing_error` or `decompression_errors` without killing the
+    entire session.
     """
 
     raw_stream: Any
@@ -392,7 +393,8 @@ def to_text(record: Any, http_content_type: str, http_content_encoding: str) -> 
         raw_stream = record.content_stream()
     if "charset=" in http_content_type:
         charset: str = http_content_type.split("charset=")[-1].split(";")[0].strip()
-        return raw_stream.read().decode(charset, errors="replace")
+        normalized_charset: str = ENCODING_ALIASES.get(charset.lower(), charset)
+        return raw_stream.read().decode(normalized_charset, errors="replace")
     else:
         decoded_text: str = raw_stream.read().decode("utf-8", errors="replace")
         if "�" in decoded_text:
@@ -404,44 +406,32 @@ def to_text(record: Any, http_content_type: str, http_content_encoding: str) -> 
 
 def convert_to_visible_ascii(html_text: str) -> str | None:
     """
-    Strip non-visible HTML content, locate an article-like subtree, and normalize
-    its text to uppercase ASCII.
+    Locate an article-like subtree in the HTML, extract visible text, and
+    normalize it to uppercase ASCII.
 
     Parameters
     ----------
     html_text : str
-        Raw HTML document as a Unicode string, typically the output of
-        `to_text(...)`.
+        Raw Unicode HTML string, usually produced by `to_text(...)`.
 
     Returns
     -------
     str | None
-        Uppercase ASCII text for the best-effort article body with whitespace
-        collapsed on success; `None` if the HTML cannot be parsed or no
-        sufficiently long article-like region is found.
-
-    Raises
-    ------
-    None
-        Parsing errors from `lxml.html` are caught and converted to `None`.
+        Canonicalized article body on success; `None` when no sufficiently long
+        article-like region can be found or when HTML parsing fails.
 
     Notes
     -----
-    - The function first parses the HTML into a tree and scans
-      `ARTICLE_ROOT_XPATHS` in order to find candidate article roots
-      (e.g., ``<article>``, main content containers, or common CMS IDs/classes).
-    - For each XPath that yields elements, the longest element by
-      ``len(el.text_content())`` is chosen as the root candidate.
-    - Within this root candidate, the function iterates over
-      `ARTICLE_BODY_XPATHS` to search for more specific article-body
-      containers (e.g., elements with ``itemprop="articleBody"`` or
-      body-like classes). For each body XPath, the longest matching
-      element is passed to `extract_text_from_element`.
-    - If any body element produces non-empty text from
-      `extract_text_from_element`, that text is returned immediately.
-    - Non-visible tags listed in `NON_VISIBLE_TAGS` are stripped inside
-      `extract_text_from_element`; this function is concerned only with
-      structural selection of the most article-like subtree.
+    - The HTML is parsed into a tree and scanned using `ARTICLE_ROOT_XPATHS`.
+      The longest element (by text length) among matches is used as the root.
+    - Within that root, `ARTICLE_BODY_XPATHS` are evaluated to locate more
+      specific body containers; the longest matching body element is chosen.
+    - `extract_text_from_element` performs non-visible tag removal,
+      whitespace normalization, ASCII filtering, and enforces the minimum
+      25-token requirement.
+    - If the selected element yields an empty string (too short) the search
+      continues; only a non-empty result is returned.
+    - All parsing errors (XML syntax, malformed HTML) result in `None`.
     """
 
     if not html_text.strip():
@@ -513,45 +503,36 @@ def extract_text_from_element(element: Any) -> str:
     return ascii_text.upper()
 
 
-def detect_firms(words: list[str], run_data: RunData) -> set[str]:
+def detect_firms(words: List[str], run_data: RunData) -> set[str]:
     """
-    Identify firms mentioned in tokenized article text via name-part matches.
+    Identify firms referenced in an article by matching canonicalized name
+    tokens against `run_data.firm_name_parts`.
 
     Parameters
     ----------
-    words : list[str]
-        Tokenized article text, typically derived from visible ASCII by
-        splitting on whitespace before canonicalization.
+    words : List[str]
+        Whitespace-split article tokens prior to canonicalization.
     run_data : RunData
-        Run context providing `firm_info_dict`, a mapping from CIK to
-        `FirmInfo` containing the canonical firm names for the day.
+        Run context providing `firm_name_parts`, a mapping from CIK to the set
+        of canonicalized firm-name tokens used for matching.
 
     Returns
     -------
     set[str]
-        Set of CIK strings for firms whose canonicalized name parts all
-        appear in the article word set and whose non-suffix name tokens
-        each occur at least twice.
-
-    Raises
-    ------
-    None
-        The function does not raise intentionally; it operates purely on
-        in-memory data structures.
+        Set of CIKs whose canonicalized name parts all appear in the article’s
+        canonicalized word-frequency dictionary, subject to frequency guards.
 
     Notes
     -----
-    - Words and firm-name parts are canonicalized by `word_canonicalizer`
-      (alphanumeric-only, uppercased) and empty tokens are discarded.
-    - Firm-name tokens (including common suffixes such as ``"INC"``,
-      ``"CORP"``, ``"LLC"``) must all be present in the canonicalized
-      article word set for a firm to be considered a candidate match.
-    - Common corporate suffixes are listed in `NAME_SUFFIXES_SET`. After
-      the initial presence check, these suffix tokens are removed and the
-      remaining name parts must each appear at least twice in the article
-      for the match to be accepted.
-    - This frequency guard helps avoid spurious matches on very short
-      mentions or noisy contexts, trading some recall for higher precision.
+    - Article tokens are canonicalized via `word_canonicalizer`, discarding
+      non-alphanumeric characters and uppercasing the result.
+    - A firm is a candidate match when all canonicalized name parts appear in
+      the article word set.
+    - Corporate suffixes (from `NAME_SUFFIXES_SET`) are removed from the name
+      before frequency checks.
+    - Remaining name parts must each occur **at least twice** in the article.
+    - This approach intentionally favors precision over recall and avoids
+      spurious matches caused by short or noisy mentions.
     """
 
     word_frequency_dict: dict[str, int] = {}
@@ -559,13 +540,8 @@ def detect_firms(words: list[str], run_data: RunData) -> set[str]:
         canonical_word: str = word_canonicalizer(word)
         if canonical_word:
             word_frequency_dict[canonical_word] = word_frequency_dict.get(canonical_word, 0) + 1
-    name_dict: dict[str, set[str]] = {}
-    for firm_info in run_data.firm_info_dict.values():
-        parts = {word_canonicalizer(part) for part in firm_info.firm_name.split()}
-        if parts:
-            name_dict[firm_info.cik] = parts
     matched_firms_by_name: set[str] = set()
-    for cik, name_parts in name_dict.items():
+    for cik, name_parts in run_data.firm_name_parts.items():
         if name_parts.issubset(word_frequency_dict.keys()):
             name_parts_no_suffixes: set[str] = name_parts - NAME_SUFFIXES_SET
             appearance_count_no_suffixes: int = min(
