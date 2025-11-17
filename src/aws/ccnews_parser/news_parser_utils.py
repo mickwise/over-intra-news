@@ -327,7 +327,6 @@ class SampleMetadata:
       get per-day or per-session totals.
     """
 
-
     records_scanned: int
     html_200_count: int
     unhandled_errors: int
