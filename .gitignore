@@ -243,3 +243,7 @@ pgdata/
 
 # deprecated directory
 deprecated/
+
+# Local parquet cache
+ccnews_articles/
+ccnews_sample_stats/

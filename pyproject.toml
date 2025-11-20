@@ -44,7 +44,7 @@ python_version = "3.13"
 namespace_packages = true
 explicit_package_bases = true
 mypy_path = "src"
-files = ["src/infra", "src/aws/ccnews_sampler", "tests"]
+files = ["src/infra", "src/aws", "tests"]
 
 [[tool.mypy.overrides]]
 module = ["exchange_calendars.*", "warcio.*", "langdetect.*"]

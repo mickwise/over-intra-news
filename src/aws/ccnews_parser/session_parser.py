@@ -294,6 +294,8 @@ def extract_data_from_record(
             return None
         words: List[str] = visible_text.split()
         word_count: int = len(words)
+        if word_count < 25:
+            return None
         sample_metadata.ge_25_words += 1
         if word_count > MAXIMUM_ALLOWED_TOKENS:
             sample_metadata.too_long_articles += 1
