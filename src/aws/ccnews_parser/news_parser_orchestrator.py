@@ -50,6 +50,7 @@ import boto3
 import botocore.exceptions
 import pandas as pd
 from dotenv import load_dotenv
+from langdetect import DetectorFactory
 
 from aws.ccnews_parser.news_parser_config import FIRST_DAY, MAXIMAL_WORKER_COUNT
 from aws.ccnews_parser.news_parser_utils import (
@@ -100,6 +101,7 @@ def main() -> None:
     """
 
     load_dotenv()
+    DetectorFactory.seed = 42
     year, bucket, logger_level = extract_cli_args()
     logger: InfraLogger = initialize_logger(
         component_name="ccnews_parser",
