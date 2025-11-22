@@ -28,7 +28,7 @@ and `session` as regular columns for convenience.
 | session           | string         | Logical session bucket: `"intraday"` or `"overnight"`.                                              |
 | cik_list          | array<string>  | List of matched firm CIKs (length 1–3) based on canonicalized firm-name tokens.                     |
 | word_count        | int32 / int64  | Count of whitespace-delimited tokens in the visible ASCII text after filtering.                     |
-| language          | string         | ISO 639-1 language code detected by `langdetect` (only `"en"` rows are retained).                   |
+| language_confidence| float         | langdetect output probability of English detected.                                                  |
 | full_text         | string         | Upper-cased, ASCII-only visible text extracted from HTML after stripping non-visible tags.          |
 
 ## Notes
