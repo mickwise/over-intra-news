@@ -26,6 +26,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]" -c ci-constraints.txt
 
+      - name: Download NLTK data (stopwords)
+        run: |
+          python -m nltk.downloader -d ./nltk_data stopwords
+
       - name: "Sanity: packages import from src-layout"
         run: |
           python - <<'PY'
@@ -45,6 +49,8 @@ jobs:
         run: mypy
 
       - name: Pytest (unit tests)
+        env:
+          NLTK_DATA: ./nltk_data
         run: python -m pytest -q tests
 
       - name: shfmt (shell script format check)
