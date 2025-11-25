@@ -18,11 +18,15 @@ dependencies = [
   "requests",
   "boto3",
   "lxml",
+  "ipykernel",
+  "nbconvert",
   "sqlalchemy",
   "warcio",
   "langdetect",
   "pyarrow",
   "s3fs",
+  "matplotlib",
+  "nltk"
 ]
 
 [project.optional-dependencies]
@@ -47,7 +51,7 @@ mypy_path = "src"
 files = ["src/infra", "src/aws", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["exchange_calendars.*", "warcio.*", "langdetect.*"]
+module = ["exchange_calendars.*", "warcio.*", "langdetect.*", "nltk.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

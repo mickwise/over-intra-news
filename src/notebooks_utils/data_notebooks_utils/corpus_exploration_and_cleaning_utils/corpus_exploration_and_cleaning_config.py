@@ -1,3 +1,61 @@
+"""
+Purpose
+-------
+Centralize configuration constants for corpus cleaning and tokenization in the
+LDA preprocessing pipeline. This module defines boilerplate filters, language
+quality thresholds, token-length constraints, numeric magnitude cutoffs, and
+batching parameters used across corpus-sampling and normalization code.
+
+Key behaviors
+-------------
+- Enumerates known noisy prefixes (`NOISY_PREFIXES`) that, when found at the
+  start of an article body, cause the article to be dropped as non-content
+  (e.g., pure paywalls, error pages, ticker tables).
+- Enumerates noisy substrings (`NOISY_SUBSTRINGS`) that, when present anywhere
+  in the body, indicate boilerplate or non-article content and trigger
+  exclusion.
+- Specifies a strict language-confidence threshold
+  (`STRONG_ENGLISH_CONFIDENCE_THRESHOLD`) for retaining English articles.
+- Defines minimal token-length requirements (`MINIMAL_CHAR_COUNT_PER_TOKEN`)
+  applied after stemming and cleaning.
+- Provides numeric magnitude cutoffs (`MIL`, `BIL`) for mapping raw numbers into
+  canonical buckets and a global chunk size (`CHUNK_SIZE`) for batched parquet
+  processing.
+- Declares a default output directory (`TOKENIZED_PARQUET_DIR`) for storing
+  tokenized parquet files.
+
+Conventions
+-----------
+- All prefix and substring filters are expected to be uppercased; upstream
+  components must normalize article text to uppercase before applying these
+  rules.
+- `NOISY_PREFIXES` is a tuple treated as an ordered, immutable collection of
+  leading boilerplate patterns; it must not be mutated at runtime.
+- `NOISY_SUBSTRINGS` is a set of in-body boilerplate patterns; tests and
+  downstream code must not destructively modify it (e.g., via `.pop()`).
+- `STRONG_ENGLISH_CONFIDENCE_THRESHOLD` is a probability-like scalar in
+  [0, 1] and is interpreted as a lower bound on model-reported English
+  confidence.
+- `MIL` and `BIL` are expressed in absolute units (1e6, 1e9) and are used
+  consistently across numeric canonicalization logic.
+- `CHUNK_SIZE` governs the number of articles processed per parquet chunk; all
+  batch-oriented code should respect this value to keep memory usage predictable.
+- `TOKENIZED_PARQUET_DIR` is a relative `Path` object indicating where
+  tokenized parquet files should be saved.
+
+Downstream usage
+----------------
+Import these constants from this module wherever corpus filtering, token
+cleaning, numeric canonicalization, or batch sizing decisions are required.
+This ensures that:
+- sampling heuristics (`NOISY_PREFIXES`, `NOISY_SUBSTRINGS`,
+  `STRONG_ENGLISH_CONFIDENCE_THRESHOLD`) remain consistent across pipelines, and
+- tokenization and frequency-estimation stages share a single source of truth
+  for length thresholds, numeric buckets, and chunk sizes.
+"""
+
+from pathlib import Path
+
 NOISY_PREFIXES: tuple = (
     # Financial ticker tables / price grids / forex dumps
     "LAST PRICE",
@@ -11,7 +69,7 @@ NOISY_PREFIXES: tuple = (
     "LOGIN TO CONTINUE",
     "SUBSCRIPTION REQUIRED",
     "REGISTER TO READ MORE",
-    "VIEW ALL POPULAR POSTS"
+    "VIEW ALL POPULAR POSTS",
     # Email capture
     "RECEIVE NEWS & RATINGS VIA EMAIL",
     "SIGN UP FOR OUR NEWSLETTER",
@@ -41,7 +99,8 @@ NOISY_PREFIXES: tuple = (
     "% % %",
 )
 
-NOISY_SUBSTRINGS = {
+
+NOISY_SUBSTRINGS: set[str] = {
     # Ad inserts
     "ADVERTISEMENT",
     "ADVERTISEMENT STORY CONTINUES BELOW",
@@ -68,4 +127,20 @@ NOISY_SUBSTRINGS = {
     "CONNECT WITH US",
 }
 
+
 STRONG_ENGLISH_CONFIDENCE_THRESHOLD: float = 0.999996
+
+
+MINIMAL_CHAR_COUNT_PER_TOKEN: int = 1
+
+
+MIL: float = 1e6
+
+
+BIL: float = 1e9
+
+
+CHUNK_SIZE: int = 1000
+
+
+TOKENIZED_PARQUET_DIR: Path = Path("tokenized_parquet")

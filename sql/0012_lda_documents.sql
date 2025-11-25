@@ -14,16 +14,11 @@
 --   - article_id matches parsed_news_articles.article_id.
 --   - corpus_version is a small integer used to distinguish corpus
 --     construction runs (e.g., different cleaning rules or vocabularies).
---   - cleaned_text is stored as a single TEXT field with the tokenization
---     implied by downstream consumers (e.g., whitespace-delimited).
---   - token_count and unique_token_count are computed from cleaned_text and
---     kept consistent by CHECK constraints.
 --
 -- Keys & constraints
 --   - Primary key: (article_id, corpus_version).
 --   - Foreign key: article_id → parsed_news_articles(article_id).
 --   - Checks: token_count ≥ 1; 1 ≤ unique_token_count ≤ token_count;
---     cleaned_text must be non-empty.
 --
 -- Relationships
 --   - Referenced by lda_document_terms via (article_id, corpus_version)
@@ -59,7 +54,7 @@ CREATE TABLE IF NOT EXISTS lda_documents (
     corpus_version SMALLINT NOT NULL,
 
     -- Has the article been included in LDA training
-    included_in_training BOOLEAN NOT NULL DEFAULT FALSE,
+    included_in_training BOOLEAN NOT NULL DEFAULT TRUE,
 
     -- =====================
     -- Article specific data
@@ -70,9 +65,6 @@ CREATE TABLE IF NOT EXISTS lda_documents (
 
     -- Number of unique tokens in the article after cleaning
     unique_token_count INTEGER NOT NULL,
-
-    -- Cleaned article text
-    cleaned_text TEXT NOT NULL,
 
     -- ==========
     -- Provenance
@@ -91,10 +83,7 @@ CREATE TABLE IF NOT EXISTS lda_documents (
 
     -- Unique token count must be at least 1 and not exceed token count
     CONSTRAINT lda_docs_chk_unique_token_count CHECK
-    (unique_token_count >= 1 AND unique_token_count <= token_count),
-
-    -- Cleaned text must not be empty
-    CONSTRAINT lda_docs_chk_cleaned_text CHECK (LENGTH(cleaned_text) > 0)
+    (unique_token_count >= 1 AND unique_token_count <= token_count)
 );
 
 -- Index on corpus_version, included_in_training for faster queries
@@ -118,16 +107,13 @@ COMMENT ON COLUMN lda_documents.included_in_training IS
 for the associated corpus_version.';
 
 COMMENT ON COLUMN lda_documents.token_count IS
-'Total number of tokens in cleaned_text after all corpus-level cleaning
+'Total number of tokens in cleaned text after all corpus-level cleaning
 and normalization steps have been applied.';
 
 COMMENT ON COLUMN lda_documents.unique_token_count IS
-'Number of distinct tokens present in cleaned_text; constrained to be at
+'Number of distinct tokens present in the cleaned text; constrained to be at
 least 1 and no greater than token_count.';
 
-COMMENT ON COLUMN lda_documents.cleaned_text IS
-'Cleaned article body text used for LDA input, stored as a single TEXT
-field after boilerplate removal and normalization.';
 
 COMMENT ON COLUMN lda_documents.created_at IS
 'UTC timestamp recording when this cleaned document row was created and
