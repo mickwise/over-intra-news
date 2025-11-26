@@ -1,4 +1,4 @@
-# ccnews_articles schema
+# Parquet: ccnews_articles
 
 S3 layout (logical):
 

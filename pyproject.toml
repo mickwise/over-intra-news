@@ -26,7 +26,7 @@ dependencies = [
   "pyarrow",
   "s3fs",
   "matplotlib",
-  "nltk"
+  "nltk",
 ]
 
 [project.optional-dependencies]

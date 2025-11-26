@@ -1,4 +1,4 @@
-# ccnews_sample_stats schema
+# Parquet: ccnews_sample_stats
 
 S3 layout (logical):
 
