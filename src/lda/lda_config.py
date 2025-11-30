@@ -9,7 +9,7 @@ is invoked on the host.
 
 Key behaviors
 -------------
-- Define project-relative paths under a dedicated `data/` directory for
+- Define project-relative paths under a dedicated `local_data/` directory for
   all MALLET input and output files used during training and inference.
 - Expose a configurable handle to the `mallet` executable so that the
   training and inference wrappers can run on an EC2 environment
@@ -17,14 +17,18 @@ Key behaviors
 - Separate training artifacts (global model, doc-topics, topic keys,
   diagnostics, etc.) from inference artifacts (new input documents,
   inference instance list, inferred doc-topics).
+- Allow multiple independent LDA runs (e.g., different random seeds) to
+  execute concurrently by writing run-specific outputs under
+  `local_data/run_<RUN_ID>/`, where `RUN_ID` is taken from the
+  `LDA_RUN_ID` environment variable.
 
 Conventions
 -----------
-- All paths are expressed as project-relative locations under `data/`,
+- All paths are expressed as project-relative locations under `local_data/`,
   assuming the working directory is the repository root when the LDA
   pipeline is executed.
 - Text input files are newline-delimited, with each line formatted as
-  `<instance_id>\\tno_label\\t<token token ...>` and all text
+  `<instance_id>\tno_label\t<token token ...>` and all text
   preprocessing performed upstream.
 - Files with a `.mallet` extension are MALLET instance lists or binary
   model artifacts; `.txt` files are human-readable text outputs such as
@@ -39,12 +43,22 @@ Attributes
 INPUT_FILE_PATH : str
     Path to the pre-materialized **training corpus** passed to
     `mallet import-file --input`. Each line represents a single training
-    document as `<instance_id>\\tno_label\\t<space-delimited tokens>`.
+    document as `<instance_id>\tno_label\t<space-delimited tokens>`.
 
 PATH_TO_MALLET : str
     Name or path of the `mallet` executable invoked by the wrapper
     functions. Typically just `"mallet"` when MALLET has been installed
     and added to `$PATH` on the target machine.
+
+RUN_ID : str
+    Identifier for the current LDA run, taken from the `LDA_RUN_ID`
+    environment variable (or `"default"` if unset). Used only to
+    namespace output artifacts.
+
+RUN_DIR : str
+    Directory under `local_data/` where all **run-specific** MALLET
+    artifacts are written for this process, typically
+    `local_data/run_<RUN_ID>/`.
 
 MALLET_FILE_PATH : str
     Output path for the **training instance list** produced by
@@ -117,8 +131,8 @@ LDA_RESULTS_S3_PREFIX : str
     Root S3 prefix under `LDA_RESULTS_S3_BUCKET` where all LDA outputs
     are written, for example `"lda_results/"`. Individual Parquet
     datasets live under sub-prefixes such as
-    `"lda_results/training/doc_topics/"` or
-    `"lda_results/inference/doc_topics/"`.
+    `"lda_results/doc_topics/training/"` or
+    `"lda_results/doc_topics/inference/"`.
 
 
 Downstream usage
@@ -126,65 +140,58 @@ Downstream usage
 - The database → text pipeline writes training documents to
   `INPUT_FILE_PATH`, after which the LDA wrapper imports them to
   `MALLET_FILE_PATH` and calls `train-topics`, producing model and
-  doc-topics artifacts under the configured paths.
+  doc-topics artifacts under the configured paths for the active
+  `RUN_ID`.
 - For inference, a separate pipeline writes new documents to
   `INFERENCE_INPUT_FILE_PATH`, then the wrapper imports them to
   `INFERENCE_OUTPUT_FILE_PATH` using `--use-pipe-from` with
   `MALLET_FILE_PATH` and calls `infer-topics` to populate
   `INFERENCE_OUTPUT_DOC_TOPIC_FILE_PATH`.
 - A dedicated parsing layer consumes the various `*_DOC_TOPIC_*`
-  and diagnostics files and push the resulting matrices / tables into
-  S3, where they can be joined with returns and firm
-  characteristics for the full Glasserman replication.
-- LDA post-processing jobs read raw MALLET text outputs from `data/`
+  and diagnostics files under `local_data/run_<RUN_ID>/` and pushes the
+  resulting matrices / tables into S3, where they can be joined with
+  returns and firm characteristics for the full Glasserman replication.
+- LDA post-processing jobs read raw MALLET text outputs from `local_data/`
   on the EC2 instance, convert them to typed Parquet datasets, and
   upload them into `LDA_RESULTS_S3_BUCKET` under `LDA_RESULTS_S3_PREFIX`.
-- Analytics and regression notebooks should treat
-  `s3://{LDA_RESULTS_S3_BUCKET}/{LDA_RESULTS_S3_PREFIX}` as the canonical
-  location for all topic-exposure and topic-quality tables used in the
-  Glasserman replication.
 """
 
-INPUT_FILE_PATH: str = "data/lda_input_documents.txt"
+import os
 
+INPUT_FILE_PATH: str = os.path.join("local_data", "lda_input_documents.txt")
 
 PATH_TO_MALLET: str = "mallet"
 
+RUN_ID: str = os.environ.get("LDA_RUN_ID", "default")
 
-MALLET_FILE_PATH: str = "data/lda_input.mallet"
+RUN_DIR: str = os.path.join("local_data", f"run_{RUN_ID}")
 
+os.makedirs(RUN_DIR, exist_ok=True)
 
-OUTPUT_MODEL_FILE_PATH: str = "data/lda_output_model.mallet"
+MALLET_FILE_PATH: str = os.path.join(RUN_DIR, "lda_input.mallet")
 
+OUTPUT_MODEL_FILE_PATH: str = os.path.join(RUN_DIR, "lda_output_model.mallet")
 
-OUTPUT_DOC_TOPIC_FILE_PATH: str = "data/lda_output_doc_topics.txt"
+OUTPUT_DOC_TOPIC_FILE_PATH: str = os.path.join(RUN_DIR, "lda_output_doc_topics.txt")
 
+OUTPUT_TOPIC_KEYS_FILE_PATH: str = os.path.join(RUN_DIR, "lda_output_topic_keys.txt")
 
-OUTPUT_TOPIC_KEYS_FILE_PATH: str = "data/lda_output_topic_keys.txt"
+INFERENCER_FILE_PATH: str = os.path.join(RUN_DIR, "lda_inferencer.mallet")
 
+DIAGNOSTICS_FILE_PATH: str = os.path.join(RUN_DIR, "lda_diagnostics.xml")
 
-INFERENCER_FILE_PATH: str = "data/lda_inferencer.mallet"
+TOPIC_WORDS_WEIGHT_FILE_PATH: str = os.path.join(RUN_DIR, "lda_topic_words.txt")
 
+WORD_TOPIC_COUNTS_FILE_PATH: str = os.path.join(RUN_DIR, "lda_word_topic_counts.txt")
 
-DIAGNOSTICS_FILE_PATH: str = "data/lda_diagnostics.xml"
+INFERENCE_INPUT_FILE_PATH: str = os.path.join("local_data", "lda_inference_input_documents.txt")
 
+INFERENCE_OUTPUT_FILE_PATH: str = os.path.join(RUN_DIR, "lda_inference_output_doc_topics.mallet")
 
-TOPIC_WORDS_WEIGHT_FILE_PATH: str = "data/lda_topic_words.txt"
-
-
-WORD_TOPIC_COUNTS_FILE_PATH: str = "data/lda_word_topic_counts.txt"
-
-
-INFERENCE_INPUT_FILE_PATH: str = "data/lda_inference_input_documents.txt"
-
-
-INFERENCE_OUTPUT_FILE_PATH: str = "data/lda_inference_output_doc_topics.mallet"
-
-
-INFERENCE_OUTPUT_DOC_TOPIC_FILE_PATH: str = "data/lda_inference_output_doc_topics.txt"
-
+INFERENCE_OUTPUT_DOC_TOPIC_FILE_PATH: str = os.path.join(
+    RUN_DIR, "lda_inference_output_doc_topics.txt"
+)
 
 LDA_RESULTS_S3_BUCKET: str = "over-intra-news-ccnews"
-
 
 LDA_RESULTS_S3_PREFIX: str = "lda_results/"

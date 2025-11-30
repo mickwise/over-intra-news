@@ -20,16 +20,18 @@ Conventions
   (inclusive of both endpoints).
 - `instance_id` is the article's `article_id`, and the tag field is fixed to
   the literal string `"no_label"`.
-- Output is written to `lda_input_documents.txt` in the current working
-  directory; each line has the form:
+- Output is written to `INPUT_FILE_PATH` (by default
+  `"local_data/lda_input_documents.txt"`) as configured in `lda.lda_config`;
+  each line has the form:
 
     <article_id>\tno_label\t<token_1 token_2 ... token_n>\n
 
 Downstream usage
 ----------------
-Call `lda_input` from the modeling pipeline to materialize the LDA training
-corpus as a text file, then invoke MALLET's `import-file` and `train-topics`
-commands against that file to fit topic models for the selected sample.
+Call `export_corpus` from the modeling pipeline to materialize the LDA
+training corpus as a text file, then invoke MALLET's `import-file` and
+`train-topics` commands against that file to fit topic models for the
+selected sample.
 """
 
 import datetime as dt
@@ -63,8 +65,10 @@ def export_corpus(
     Returns
     -------
     None
-        Writes a file named `lda_input_documents.txt` in the current working
-        directory; does not return any in-memory representation of the corpus.
+        Writes a file to `INPUT_FILE_PATH` (by default
+        `"local_data/lda_input_documents.txt"` as configured in
+        `lda.lda_config`); does not return any in-memory representation of
+        the corpus.
 
     Raises
     ------

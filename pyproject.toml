@@ -27,6 +27,7 @@ dependencies = [
   "s3fs",
   "matplotlib",
   "nltk",
+  "gensim"
 ]
 
 [project.optional-dependencies]

@@ -114,13 +114,17 @@ def lda_fit(
     optimize_interval : int, default 10
         Number of iterations between hyperparameter optimization steps
         (`--optimize-interval`). Set to 0 to disable optimization.
+    show_topic_intervals : int, default 10
+        Interval (in iterations) for intermediate topic summaries printed
+        during training (`--show-topics-interval`). Set to 0 to disable
+        intermediate topic output entirely.
+    random_seed : int, default 42
+        Seed for MALLET's Gibbs sampler (`--random-seed`) to improve
+        reproducibility across runs.
     use_symmetric_alpha : bool, default False
         If True, request symmetric optimization of the document–topic prior
         (`--use-symmetric-alpha`). This may reduce the number of tiny topics at
         the cost of making common topics more diffuse.
-    random_seed : int, default 42
-        Seed for MALLET's Gibbs sampler (`--random-seed`) to improve
-        reproducibility across runs.
     use_inferencer : bool, default False
         If True, request that MALLET write a serialized inferencer to
         `INFERENCER_FILE_PATH` (`--inferencer-filename`), which is later used by
@@ -136,10 +140,6 @@ def lda_fit(
     output_word_topic_counts : bool, default False
         If True, write a sparse topic–word counts dump to
         `WORD_TOPIC_COUNTS_FILE_PATH` (`--word-topic-counts-file`).
-    show_topic_intervals : bool, default False
-        If enabled, this controls whether intermediate topic summaries are
-        printed during training by passing a non-zero `--show-topics-interval`
-        value. The exact interval is chosen in the implementation.
 
     Returns
     -------
@@ -159,7 +159,7 @@ def lda_fit(
     -----
     - This function assumes `INPUT_FILE_PATH` already exists and contains
       newline-delimited documents in the form
-      `"<instance_id>\\tno_label\\t<token token ...>"`.
+      `"<instance_id>\tno_label\t<token token ...>"`.
     - It will overwrite `MALLET_FILE_PATH`, `OUTPUT_MODEL_FILE_PATH`,
       `OUTPUT_DOC_TOPIC_FILE_PATH`, `OUTPUT_TOPIC_KEYS_FILE_PATH`, and any
       optional diagnostics files if they already exist.

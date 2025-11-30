@@ -18,12 +18,9 @@ Conventions
 -----------
 - All input paths are expected to be project-relative files on the
   local filesystem, as defined in `lda.lda_config`.
-- MALLET doc-topics files follow the standard format:
-
-    - Header lines start with `#` and are ignored.
-    - Each data line is:
-
-        `<doc_index> <instance_id> topic_0 proportion_0 topic_1 proportion_1 ...`
+- MALLET doc-topics files are in dense format:
+  "<doc_index> <instance_id> p_0 p_1 ... p_{K-1}"
+  where p_k is the proportion for topic k (0-based index).
 
 - MALLET topic-word-weights files are tab-delimited with lines of the
   form:
@@ -267,8 +264,7 @@ def parse_doc_topics_file(file_path: str) -> pd.DataFrame:
     Raises
     ------
     ValueError
-        If a non-comment line contains fewer than three tokens or an
-        odd number of `topic_id, proportion` fields.
+        If a non-comment line contains fewer than three tokens.
 
     Notes
     -----
@@ -296,21 +292,12 @@ def parse_doc_topics_file(file_path: str) -> pd.DataFrame:
                 raise ValueError(f"Invalid doc_index in doc-topics line: {raw_line!r}") from exc
 
             topic_tokens: List[str] = parts[2:]
-            if len(topic_tokens) % 2 != 0:
-                raise ValueError(
-                    f"Odd number of topic/proportion fields in doc-topics line: {raw_line!r}"
-                )
-
-            for i in range(0, len(topic_tokens), 2):
-                topic_id_str: str = topic_tokens[i]
-                proportion_str: str = topic_tokens[i + 1]
-
+            for topic_id, proportion_str in enumerate(topic_tokens):
                 try:
-                    topic_id: int = int(topic_id_str)
                     proportion: float = float(proportion_str)
                 except ValueError as exc:
                     raise ValueError(
-                        f"Invalid topic/proportion pair in doc-topics line: {raw_line!r}"
+                        f"Invalid topic proportion in doc-topics line: {raw_line!r}"
                     ) from exc
 
                 records.append(
