@@ -38,16 +38,17 @@ import datetime as dt
 from typing import List
 
 from infra.utils.db_utils import connect_to_db
-from lda.lda_config import INPUT_FILE_PATH
+from lda.lda_config import INFERENCE_INPUT_FILE_PATH, TRAINING_INPUT_FILE_PATH
 
 
 def export_corpus(
     sample_start: dt.date = dt.date(2016, 8, 1),
     sample_end: dt.date = dt.date(2022, 8, 1),
     corpus_version: int = 1,
+    training: bool = True,
 ) -> None:
     """
-    Materialize an LDA training corpus from Postgres into a MALLET-compatible
+    Materialize an LDA corpus from Postgres into a MALLET-compatible
     tab-delimited text file.
 
     Parameters
@@ -61,13 +62,18 @@ def export_corpus(
     corpus_version : int, default 1
         Corpus construction identifier used to filter both the vocabulary and
         document–term matrix.
+    training : bool, default True
+        When True, write the corpus to `TRAINING_INPUT_FILE_PATH` for use by
+        `mallet train-topics`. When False, write the corpus to
+        `INFERENCE_INPUT_FILE_PATH` for use by `mallet infer-topics` on an
+        out-of-sample window.
 
     Returns
     -------
     None
-        Writes a file to `INPUT_FILE_PATH` (by default
-        `"local_data/lda_input_documents.txt"` as configured in
-        `lda.lda_config`); does not return any in-memory representation of
+        Writes a file to `TRAINING_INPUT_FILE_PATH` (when ``training=True``)
+        or `INFERENCE_INPUT_FILE_PATH` (when ``training=False``) as configured
+        in `lda.lda_config`; does not return any in-memory representation of
         the corpus.
 
     Raises
@@ -95,10 +101,14 @@ def export_corpus(
         with conn.cursor() as cursor:
             cursor.execute(input_query, (corpus_version, sample_start, sample_end))
             document_list: List[tuple] = cursor.fetchall()
-
-    with open(INPUT_FILE_PATH, "w", encoding="utf-8") as f:
-        for instance_id, document_text in document_list:
-            f.write(f"{instance_id}\tno_label\t{document_text}\n")
+    if training:
+        with open(TRAINING_INPUT_FILE_PATH, "w", encoding="utf-8") as f:
+            for instance_id, document_text in document_list:
+                f.write(f"{instance_id}\tno_label\t{document_text}\n")
+    else:
+        with open(INFERENCE_INPUT_FILE_PATH, "w", encoding="utf-8") as f:
+            for instance_id, document_text in document_list:
+                f.write(f"{instance_id}\tno_label\t{document_text}\n")
 
 
 def generate_input_query() -> str:

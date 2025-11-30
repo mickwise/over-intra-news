@@ -404,6 +404,7 @@ export_corpus(
     sample_start="2016-08-01",
     sample_end="2022-08-01",
     corpus_version=1,
+    training=True
 )
 PY
 ```

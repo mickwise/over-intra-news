@@ -63,13 +63,13 @@ from lda.lda_config import (
     INFERENCE_OUTPUT_DOC_TOPIC_FILE_PATH,
     INFERENCE_OUTPUT_FILE_PATH,
     INFERENCER_FILE_PATH,
-    INPUT_FILE_PATH,
     MALLET_FILE_PATH,
     OUTPUT_DOC_TOPIC_FILE_PATH,
     OUTPUT_MODEL_FILE_PATH,
     OUTPUT_TOPIC_KEYS_FILE_PATH,
     PATH_TO_MALLET,
     TOPIC_WORDS_WEIGHT_FILE_PATH,
+    TRAINING_INPUT_FILE_PATH,
     WORD_TOPIC_COUNTS_FILE_PATH,
 )
 
@@ -276,7 +276,7 @@ def input_to_mallet(with_pipe: bool = False) -> None:
         + " "
         + "import-file --input"
         + " "
-        + (INFERENCE_INPUT_FILE_PATH if with_pipe else INPUT_FILE_PATH)
+        + (INFERENCE_INPUT_FILE_PATH if with_pipe else TRAINING_INPUT_FILE_PATH)
         + " "
         + "--output"
         + " "

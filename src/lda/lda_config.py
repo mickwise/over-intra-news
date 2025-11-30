@@ -40,7 +40,7 @@ Conventions
 
 Attributes
 ----------
-INPUT_FILE_PATH : str
+TRAINING_INPUT_FILE_PATH : str
     Path to the pre-materialized **training corpus** passed to
     `mallet import-file --input`. Each line represents a single training
     document as `<instance_id>\tno_label\t<space-delimited tokens>`.
@@ -158,7 +158,7 @@ Downstream usage
 
 import os
 
-INPUT_FILE_PATH: str = os.path.join("local_data", "lda_input_documents.txt")
+TRAINING_INPUT_FILE_PATH: str = os.path.join("local_data", "lda_input_documents.txt")
 
 PATH_TO_MALLET: str = "mallet"
 

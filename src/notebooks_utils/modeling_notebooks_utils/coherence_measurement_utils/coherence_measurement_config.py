@@ -45,6 +45,7 @@ from typing import List
 
 CORPUS_START_DATE: dt.date = dt.date(2016, 8, 1)
 
+
 CORPUS_END_DATE: dt.date = dt.date(2025, 8, 1)
 
 
