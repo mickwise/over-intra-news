@@ -7,8 +7,9 @@
 --   LDA topic exposures (via CIK + date) and market data from EODHD.
 --
 -- Row semantics
---   One row = one (cik, trading_day) combination for a U.S. equity in the
---   research universe (e.g., S&P 500 constituents) on a NYSE trading day.
+--   One row = one (cik, eodhd_symbol, trading_day) combination for a U.S.
+--   equity in the research universe (e.g., S&P 500 constituents) on a NYSE
+--   trading day.
 --
 -- Conventions
 --   - cik is the immutable firm identifier (10-digit, zero-padded) and
@@ -18,11 +19,16 @@
 --   - All returns are log returns; all rolling controls are computed using
 --     only information strictly prior to trading_day (no look-ahead).
 --   - Prices are in the local trading currency (USD for this project).
+--   - Filing date corresponds to the most recent quarterly report used to
+--     source fundamentals for this observation.
 --
 -- Keys & constraints
---   - Primary key: (cik, trading_day).
---   - One row per firm-date; eodhd_symbol+trading_day is also enforced unique
---     for basic vendor-side sanity checking.
+--   - Primary key: (cik, eodhd_symbol, trading_day).
+--   - One row per firm-date-ticker; eodhd_symbol+trading_day is also enforced
+--     unique for basic vendor-side sanity checking.
+--   - Volume must be non-negative; prices must be positive.
+--   - When fundamentals data is present, filing_date must exist and be
+--     on or before trading_day.
 --
 -- Relationships
 --   - cik → security_master.cik (ON DELETE CASCADE).
@@ -58,15 +64,6 @@ CREATE TABLE IF NOT EXISTS equity_regression_panel (
 
     -- Vendor symbol used for EODHD lookups (e.g., 'AAPL.US')
     eodhd_symbol TEXT NOT NULL,
-
-    -- Country code of the trading venue (eg. 'US')
-    country_code TEXT,
-
-    -- Primary exchange code (eg. 'XNYS')
-    primary_exchange TEXT,
-
-    -- Trading currency code (eg. 'USD')
-    currency_code TEXT,
 
     -- ================
     -- Raw price levels
@@ -115,11 +112,11 @@ CREATE TABLE IF NOT EXISTS equity_regression_panel (
     -- Annualized realized volatility over last 252 trading days
     realized_vol_252d DOUBLE PRECISION,
 
-    -- 12-month momentum: cumulative log return from t-12m to t-1m
-    momentum_12m DOUBLE PRECISION,
-
-    -- 1-month reversal: log return over (t-1m, t)
+    -- 1-month reversal: percentage return over (t-1m, t)
     momentum_1m DOUBLE PRECISION,
+
+    -- 12-month momentum: cumulative percentage return from t-12m to t-1m
+    momentum_12m DOUBLE PRECISION,
 
     -- ===========================
     -- Fundamentals-based controls
@@ -139,6 +136,9 @@ CREATE TABLE IF NOT EXISTS equity_regression_panel (
     -- fundamentals
     book_to_market DOUBLE PRECISION,
 
+    -- Filing date for this observation's most recent quarterly report
+    filing_date DATE,
+
     -- ==========
     -- Provenance
     -- ==========
@@ -150,9 +150,9 @@ CREATE TABLE IF NOT EXISTS equity_regression_panel (
     -- Constraints
     -- ===========
 
-    -- Primary key on (cik, trading_day)
+    -- Primary key on (cik, eodhd_symbol, trading_day)
     CONSTRAINT erp_pk
-    PRIMARY KEY (cik, trading_day),
+    PRIMARY KEY (cik, eodhd_symbol, trading_day),
 
     -- Volume must be non-negative
     CONSTRAINT erp_chk_volume_nonneg
@@ -166,6 +166,27 @@ CREATE TABLE IF NOT EXISTS equity_regression_panel (
         AND low_price > 0
         AND close_price > 0
         AND adjusted_close_price > 0
+    ),
+
+    -- Ensure filing_date exists and is not after trading_day when fundamentals
+    -- data is present
+    CONSTRAINT erp_chk_filing_date_valid CHECK
+    (
+        (
+            shares_outstanding IS NULL
+            AND
+            market_cap IS NULL
+            AND
+            log_market_cap IS NULL
+            AND
+            book_to_market IS NULL
+        )
+        OR
+        (
+            filing_date IS NOT NULL
+            AND
+            filing_date <= trading_day
+        )
     )
 
 );
@@ -180,7 +201,7 @@ ON equity_regression_panel (trading_day);
 
 COMMENT ON TABLE equity_regression_panel IS
 'Daily firm-level panel of returns and control variables for
-Glasserman-style news regressions, keyed by CIK and trading_day.';
+Glasserman-style news regressions, keyed by CIK, ticker and trading_day.';
 
 COMMENT ON COLUMN equity_regression_panel.cik IS
 '10-digit zero-padded SEC CIK, FK into security_master.';
@@ -190,15 +211,6 @@ COMMENT ON COLUMN equity_regression_panel.trading_day IS
 
 COMMENT ON COLUMN equity_regression_panel.eodhd_symbol IS
 'Vendor symbol used to request data from EODHD (e.g., AAPL.US).';
-
-COMMENT ON COLUMN equity_regression_panel.country_code IS
-'Optional ISO country code for the trading venue (e.g., US).';
-
-COMMENT ON COLUMN equity_regression_panel.primary_exchange IS
-'Optional primary exchange code (e.g., XNYS) for sanity checks.';
-
-COMMENT ON COLUMN equity_regression_panel.currency_code IS
-'Trading currency code (e.g., USD).';
 
 COMMENT ON COLUMN equity_regression_panel.open_price IS
 'Unadjusted official open price from EODHD /eod endpoint.';
@@ -235,12 +247,12 @@ COMMENT ON COLUMN equity_regression_panel.realized_vol_252d IS
 'Annualized realized volatility over the last 252 daily close-to-close
 log returns, using only information prior to trading_day.';
 
-COMMENT ON COLUMN equity_regression_panel.momentum_12m IS
-'12-month momentum signal (t-12m to t-1m cumulative log return).';
-
 COMMENT ON COLUMN equity_regression_panel.momentum_1m IS
 '1-month reversal / short-term momentum signal (t-1m to t cumulative
-log return).';
+percentage return).';
+
+COMMENT ON COLUMN equity_regression_panel.momentum_12m IS
+'12-month momentum signal (t-12m to t-1m cumulative percentage return).';
 
 COMMENT ON COLUMN equity_regression_panel.shares_outstanding IS
 'Shares outstanding used to compute market_cap at this date, sourced
@@ -255,6 +267,10 @@ COMMENT ON COLUMN equity_regression_panel.log_market_cap IS
 COMMENT ON COLUMN equity_regression_panel.book_to_market IS
 'Book-to-market ratio computed from fundamentals; nullable if not
 available for a given firm-date.';
+
+COMMENT ON COLUMN equity_regression_panel.filing_date IS
+'Filing date of the most recent quarterly report used to source
+fundamentals for this observation.';
 
 COMMENT ON COLUMN equity_regression_panel.created_at IS
 'UTC timestamp when this row was first materialized.';

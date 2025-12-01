@@ -739,23 +739,299 @@ Notes:
   `--exclude` / `--include` patterns or sync a narrower prefix such as
   `lda_results/raw/..`.
 
+---
 
-## Step temp – Next steps (parsing & inference – outline)
+## Step 9 – Export inference corpus and run multi-chain `infer-topics`
 
-Once you’ve decided which chain(s) you want to keep:
+After selecting the training run IDs you want to use for out-of-sample
+evaluation (here we keep the same four seeds), we:
 
-1. **Inference export and `infer-topics`**
-   Re-use `export_corpus` with an out-of-sample date window, and update
-   `lda_infer` to load the specific `inferencer.mallet` for the chosen
-   run.
+1. Export an **out-of-sample** corpus window from Postgres.
+2. Convert that corpus into a MALLET instance list under each run
+   directory.
+3. Run `mallet infer-topics` via the `lda_infer` wrapper, once per run,
+   in parallel.
 
-2. **Inference parsing & upload**
-   As with training, map
-   `local_data/run_K200_seed42/lda_inference_output_doc_topics.txt` into
-   an S3 Parquet table under a run-specific prefix.
+### 9.1 – Export inference corpus from Postgres
 
-All of that follows the same pattern as the original single-run
-README; the main difference is that **run IDs are explicit** and we
-support **multiple chains** rather than assuming a single global model.
+Pick an **out-of-sample date window** that does not overlap the training
+period (example: `2016-08-01 – 2022-08-01` for training and
+`2022-08-01 – 2025-08-01` for inference). The exporter uses the same
+DB conventions and environment variables as Step 5.
+
+On the LDA EC2:
+
+```bash
+cd "$HOME/over-intra-news"
+source .venv/bin/activate
+
+python - << 'PY'
+from lda.lda_input import export_corpus
+
+export_corpus(
+    sample_start="2022-08-02",   # <<< choose your out-of-sample window
+    sample_end="2025-08-01",
+    corpus_version=1,
+    training=False               # <-- marks this as inference corpus
+)
+PY
+```
+
+This writes the inference corpus to the path configured in
+`lda.lda_config` (for example `data/lda_inference_documents.txt`),
+using the same `<instance_id>\tno_label\t<tokens...>` format as
+training.
+
+Sanity check:
+
+```bash
+ls -lh data/lda_inference_documents.txt
+head -n 3 data/lda_inference_documents.txt
+```
+
+### 9.2 – Rebuild MALLET instance lists for inference
+
+For each run ID we want a separate MALLET instance list living under
+`local_data/run_${run_id}/`. The `input_to_mallet()` helper reads the
+project-configured inference input file and writes the corresponding
+`.mallet` instance file for the current `LDA_RUN_ID`.
+
+```bash
+cd "$HOME/over-intra-news"
+source .venv/bin/activate
+
+# Ensure MALLET is on PATH and heap size is large enough
+export PATH="$HOME/mallet/bin:$PATH"
+export MALLET_MEMORY=2g
+
+for seed in 42 43 44 45; do
+  run_id="K200_seed${seed}"
+  echo "Rebuilding inference instance list for ${run_id}..."
+
+  LDA_RUN_ID="$run_id" python - << 'PY'
+from lda.lda_model import input_to_mallet
+
+# Uses the inference corpus defined in lda_config for this LDA_RUN_ID
+input_to_mallet(with_pipe=False)
+PY
+done
+```
+
+After this loop you should see, for each seed, something like:
+
+```bash
+ls -lh local_data/run_K200_seed42/
+# ... lda_inference_input.mallet (name depends on lda_config)
+```
+
+### 9.3 – Launch `mallet infer-topics` for all seeds
+
+Now we run MALLET inference for all four chains in parallel. The
+`lda_infer()` wrapper:
+
+* Loads the correct `inferencer.mallet` for the current `LDA_RUN_ID`.
+* Points MALLET at the inference instance list built in 9.2.
+* Writes `lda_inference_output_doc_topics.txt` under the run directory.
+
+```bash
+cd "$HOME/over-intra-news"
+source .venv/bin/activate
+
+export PATH="$HOME/mallet/bin:$PATH"
+export MALLET_MEMORY=2g
+
+for seed in 42 43 44 45; do
+  run_id="K200_seed${seed}"
+  export LDA_RUN_ID="$run_id"
+  log="lda_infer_${run_id}.log"
+
+  echo "Launching inference for ${run_id} (seed=${seed})..."
+
+  nohup python - <<PY > "$log" 2>&1 &
+from lda.lda_model import lda_infer
+
+lda_infer(
+    num_iterations=1000,
+    random_seed=${seed},
+)
+PY
+
+done
+```
+
+You should see four background processes:
+
+```bash
+ps aux | grep 'infer-topics' | grep -v grep
+```
+
+Monitor logs:
+
+```bash
+cd "$HOME/over-intra-news"
+
+for seed in 42 43 44 45; do
+  run_id="K200_seed${seed}"
+  echo "==== ${run_id} ===="
+  tail -n 20 "lda_infer_${run_id}.log"
+done
+```
+
+When all chains are finished, the `infer-topics` processes disappear:
+
+```bash
+ps aux | grep 'infer-topics' | grep -v grep   # no output
+```
+
+and each run directory contains a non-empty inference doc-topics file:
+
+```bash
+for seed in 42 43 44 45; do
+  run_id="K200_seed${seed}"
+  echo "==== ${run_id} ===="
+  ls -lh "local_data/run_${run_id}/lda_inference_output_doc_topics.txt"
+  head -n 3 "local_data/run_${run_id}/lda_inference_output_doc_topics.txt"
+done
+```
+
+The header should look like:
+
+```text
+#doc name topic proportion ...
+0  <instance_id>  p_0 p_1 ... p_{K-1}
+```
 
 ---
+
+## Step 10 – Parse inference outputs and upload to S3
+
+Once `infer-topics` has completed for the desired run IDs, we convert
+the dense MALLET inference outputs into a **long-format doc–topic
+exposure table** and upload them as Parquet to S3.
+
+Under the hood, `lda.lda_output_parse.upload_inference_outputs_to_s3`:
+
+* Reads the file pointed to by `INFERENCE_OUTPUT_DOC_TOPIC_FILE_PATH`
+  (for the current `LDA_RUN_ID`), typically
+  `local_data/run_${run_id}/lda_inference_output_doc_topics.txt`.
+* Parses each line of the form:
+
+  ```text
+  <doc_index> <instance_id> p_0 p_1 ... p_{K-1}
+  ```
+
+  into `(doc_index, instance_id, topic_id, topic_proportion)`.
+* Writes a Parquet file to:
+
+  ```text
+  {LDA_RESULTS_S3_PREFIX}/doc_topics/inference/{run_id}.parquet
+  ```
+
+The schema matches the training doc-topics Parquet:
+
+```text
+doc_index          int32
+instance_id        string
+topic_id           int32
+topic_proportion   float64
+```
+
+### 10.1 – Batch uploader for all inference runs
+
+Create (or update) `scripts/upload_all_inference_outputs.sh`:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# Run IDs / seeds for which infer-topics was run
+SEEDS=(42 43 44 45)
+
+for seed in "${SEEDS[@]}"; do
+    run_id="K200_seed${seed}"
+    run_dir="local_data/run_${run_id}"
+    doc_topics_file="${run_dir}/lda_inference_output_doc_topics.txt"
+
+    echo "=== Processing inference outputs for ${run_id} ==="
+
+    # Basic sanity: make sure the inference doc-topics file exists and is non-empty
+    if [ ! -s "${doc_topics_file}" ]; then
+        echo "ERROR: Missing or empty ${doc_topics_file}" >&2
+        exit 1
+    fi
+
+    # Ensure the config layer resolves the correct run directory
+    export LDA_RUN_ID="${run_id}"
+
+    python - <<EOF
+from lda.lda_output_parse import upload_inference_outputs_to_s3
+
+run_id = "${run_id}"
+
+print(f"- Uploading inference doc-topics for {run_id}...", flush=True)
+upload_inference_outputs_to_s3(run_id)
+print(f"* Done with {run_id}", flush=True)
+EOF
+
+done
+
+echo "All inference runs uploaded successfully."
+```
+
+Make it executable and run it on the LDA EC2:
+
+```bash
+cd "$HOME/over-intra-news"
+source .venv/bin/activate
+
+chmod +x scripts/upload_all_inference_outputs.sh
+./scripts/upload_all_inference_outputs.sh
+```
+
+After this completes, S3 will contain one Parquet file per run:
+
+```text
+s3://<LDA_RESULTS_S3_BUCKET>/<LDA_RESULTS_S3_PREFIX>/doc_topics/inference/K200_seed42.parquet
+s3://<LDA_RESULTS_S3_BUCKET>/<LDA_RESULTS_S3_PREFIX>/doc_topics/inference/K200_seed43.parquet
+s3://<LDA_RESULTS_S3_BUCKET>/<LDA_RESULTS_S3_PREFIX>/doc_topics/inference/K200_seed44.parquet
+s3://<LDA_RESULTS_S3_BUCKET>/<LDA_RESULTS_S3_PREFIX>/doc_topics/inference/K200_seed45.parquet
+```
+
+These Parquet tables are the **canonical out-of-sample topic exposures**
+used by downstream regression and portfolio-construction notebooks.
+
+---
+
+## Step 11 – Load inference topic exposures into Postgres (local machine)
+
+After `infer-topics` has finished and the inference doc–topics Parquet
+files are in S3, we pull the inference Parquet tables to the
+local repo and insert them into `lda_article_topic_exposure` via
+`load_inference_topic_exposures()`.
+
+```bash
+cd "$HOME/over-intra-news"
+source .venv/bin/activate
+
+mkdir -p local_data/lda_results/doc_topics/inference
+
+aws s3 sync \
+  s3://over-intra-news-ccnews/lda_results/doc_topics/inference/ \
+  local_data/lda_results/doc_topics/inference/
+
+nohup python -c 'from lda.load_inference_topic_exposures import load_inference_topic_exposures; load_inference_topic_exposures()' >/dev/null 2>&1 &
+```
+
+To confirm it’s still running you can call:
+
+```bash
+ps aux | grep 'load_inference_topic_exposures' | grep -v grep
+```
+
+> **Note →** On a `c6i.4xlarge` EC2 instance (16 vCPUs, 32 GB RAM, ≈$0.68/hour),
+> the full LDA job in this configuration took roughly **3h40m** for
+> multi-chain training plus **~8h** for multi-chain `infer-topics`
+> (inference is not multi-threaded in this setup), for a total of about
+> **11.4 hours** of wall-clock time. At on-demand pricing this corresponds
+> to roughly **11.4 × $0.68 ≈ $7.75** in compute cost for the end-to-end
+> CC-NEWS training + inference run.
