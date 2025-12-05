@@ -11,6 +11,7 @@ name = "over-intra-news"
 version = "0.0.0"
 requires-python = ">=3.13"
 dependencies = [
+  "dotenv",
   "pandas",
   "psycopg2-binary",
   "exchange_calendars",
@@ -27,7 +28,8 @@ dependencies = [
   "s3fs",
   "matplotlib",
   "nltk",
-  "gensim"
+  "gensim",
+  "rust_timeseries"
 ]
 
 [project.optional-dependencies]

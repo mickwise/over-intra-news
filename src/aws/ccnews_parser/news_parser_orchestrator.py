@@ -559,12 +559,12 @@ def generate_article_id(article_df: pd.DataFrame) -> pd.Series:
       assign the returned Series to `article_df["article_id"]`.
     """
 
-    key_series = (
+    key_series: pd.Series = (
         article_df["ny_date"].astype(str)
         + "|"
-        + article_df["session"]
+        + article_df["session"].astype(str)
         + "|"
-        + article_df["full_text"]
+        + article_df["full_text"].astype(str)
     )
     return key_series.apply(lambda s: hashlib.sha1(s.encode("utf-8")).hexdigest())
 

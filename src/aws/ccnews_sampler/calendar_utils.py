@@ -293,7 +293,9 @@ def calculate_overnight_fraction_trading_days(
     trading_days: pd.DataFrame = calendar.loc[calendar["is_trading_day"]].copy()
     trading_days["intraday_minutes"] = cast(
         pd.Series,
-        (trading_days["session_close_utc"] - trading_days["session_open_utc"]).dt.total_seconds()
+        (
+            trading_days["session_close_utc"] - trading_days["session_open_utc"]
+        ).dt.total_seconds()  # type: ignore
         / 60,
     ).clip(0)
     trading_days["previous_close_utc"] = trading_days["session_close_utc"].shift(1)
@@ -306,7 +308,9 @@ def calculate_overnight_fraction_trading_days(
         trading_days.loc["2016-08-01", "previous_close_utc"] = last_trading_close
 
     trading_days["overnight_minutes"] = (
-        (trading_days["session_open_utc"] - trading_days["previous_close_utc"]).dt.total_seconds()
+        (
+            trading_days["session_open_utc"] - trading_days["previous_close_utc"]
+        ).dt.total_seconds()  # type: ignore
         / 60
     ).clip(0)
     trading_days["overnight_fraction"] = trading_days["overnight_minutes"] / (

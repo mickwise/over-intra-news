@@ -92,14 +92,7 @@ def extract_active_firms() -> pd.DataFrame:
             m.ticker,
             m.validity_window,
             m.cik
-        FROM ticker_cik_mapping AS m
-        WHERE EXISTS (
-            SELECT 1
-            FROM parsed_news_articles AS pna
-            JOIN lda_documents AS ld
-              ON ld.article_id = pna.article_id
-            WHERE m.cik = ANY (pna.cik_list)
-        );
+        FROM ticker_cik_mapping AS m;
     """
     engine: sa.Engine = connect_with_sqlalchemy()
     return pd.read_sql(active_firms_query, engine)
